@@ -18,6 +18,9 @@ go.work.sum
 # env file
 .env
 
-# Directories used during Koca packaging process.
+# Directories used during Koca packaging process
 koca
-koca
+
+# Koca output files
+*.deb
+*.rpm

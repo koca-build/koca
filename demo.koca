@@ -3,7 +3,7 @@ pkgname=demo
 pkgver=1.0.0
 pkgrel=1
 pkgdesc='A demo that showcases how Koca works'
-arch=('any')
+arch=('x86_64')
 depends=('python3')
 
 build() {

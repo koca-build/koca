@@ -41,3 +41,17 @@ func (a Arch) String() string {
 		panic(fmt.Sprintf("unknown architecture: %d", a))
 	}
 }
+
+// Get the Debian version of an [Arch].
+func (a Arch) DebianString() string {
+	switch a {
+	case All:
+		return "all"
+	case Any:
+		return "any"
+	case X86_64:
+		return "amd64"
+	default:
+		panic(fmt.Sprintf("unknown architecture: %d", a))
+	}
+}

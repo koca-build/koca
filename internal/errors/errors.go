@@ -1,8 +1,8 @@
 package errors
 
 import (
-	"fmt"
 	"errors"
+	"fmt"
 )
 
 // An error message that should be printed specially by the Koca CLI.
