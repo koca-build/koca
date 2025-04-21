@@ -10,6 +10,7 @@ import (
 	"github.com/goreleaser/nfpm/v2"
 	"github.com/goreleaser/nfpm/v2/deb"
 	nfpmFiles "github.com/goreleaser/nfpm/v2/files"
+	"github.com/goreleaser/nfpm/v2/rpm"
 	"github.com/koca-build/koca/internal/env"
 	"github.com/koca-build/koca/pkg/syntax"
 	shInterp "mvdan.cc/sh/v3/interp"
@@ -19,8 +20,44 @@ import (
 // The Koca package directory.
 const packageDir = "koca/pkg"
 
+// Create a Debian package file from the provided package information.
+func createDebPackage(packageInfo *nfpm.Info) error {
+	debName := deb.Default.ConventionalFileName(packageInfo)
+	fmt.Println("Creating deb file:", debName)
+
+	debFile, err := os.Create(debName)
+	if err != nil {
+		return fmt.Errorf("failed to create deb file '%s': %w", debName, err)
+	}
+	defer debFile.Close()
+
+	if err := deb.Default.Package(packageInfo, debFile); err != nil {
+		return fmt.Errorf("failed to write deb file '%s': %w", debName, err)
+	}
+
+	return nil
+}
+
+// Create an RPM package file from the provided package information.
+func createRpmPackage(packageInfo *nfpm.Info) error {
+	rpmName := rpm.Default.ConventionalFileName(packageInfo)
+	fmt.Println("Creating rpm file:", rpmName)
+
+	rpmFile, err := os.Create(rpmName)
+	if err != nil {
+		return fmt.Errorf("failed to create rpm file '%s': %w", rpmName, err)
+	}
+	defer rpmFile.Close()
+
+	if err := rpm.Default.Package(packageInfo, rpmFile); err != nil {
+		return fmt.Errorf("failed to write rpm file '%s': %w", rpmName, err)
+	}
+
+	return nil
+}
+
 // Run a packaging session from the given function.
-func RunPackage(packageFunc *shSyntax.FuncDecl, vars *syntax.KocaVars, maintainer string) error {
+func RunPackage(packageFunc *shSyntax.FuncDecl, vars *syntax.KocaVars, maintainer string, outputType string) error {
 	absPackageDir, err := filepath.Abs(packageDir)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path of '%s': %w", packageDir, err)
@@ -56,7 +93,7 @@ func RunPackage(packageFunc *shSyntax.FuncDecl, vars *syntax.KocaVars, maintaine
 		return err
 	}
 
-	var debFiles nfpmFiles.Contents
+	var files nfpmFiles.Contents
 	// [filepath.WalkDir] only returns an error if we return one, so need to handle its errors.
 	filepath.WalkDir(absPackageDir, func(path string, d os.DirEntry, err error) error {
 		if d.IsDir() {
@@ -64,7 +101,7 @@ func RunPackage(packageFunc *shSyntax.FuncDecl, vars *syntax.KocaVars, maintaine
 		}
 
 		outputPath := strings.TrimPrefix(path, absPackageDir)
-		debFiles = append(debFiles, &nfpmFiles.Content{
+		files = append(files, &nfpmFiles.Content{
 			Source:      path,
 			Destination: outputPath,
 		})
@@ -78,24 +115,23 @@ func RunPackage(packageFunc *shSyntax.FuncDecl, vars *syntax.KocaVars, maintaine
 		Description: vars.PkgDesc,
 		Platform:    "linux",
 		Section:     "default",
-		Arch:        vars.Archs[0].DebianString(),
+		Arch:        vars.Archs[0].String(),
 		Maintainer:  maintainer,
 		Overridables: nfpm.Overridables{
-			Contents: debFiles,
+			Deb: nfpm.Deb{
+				Arch: vars.Archs[0].DebianString(),
+			},
+			RPM: nfpm.RPM{
+				Arch: vars.Archs[0].String(),
+			},
+			Contents: files,
 		},
 	}
 
-	debName := deb.Default.ConventionalFileName(&packageInfo)
-
-	debFile, err := os.Create(debName)
-	if err != nil {
-		return fmt.Errorf("failed to create deb file '%s': %w", debName, err)
+	if outputType == "deb" {
+		return createDebPackage(&packageInfo)
+	} else if outputType == "rpm" {
+		return createRpmPackage(&packageInfo)
 	}
-	defer debFile.Close()
-
-	if err := deb.Default.Package(&packageInfo, debFile); err != nil {
-		return fmt.Errorf("failed to write deb file '%s': %w", debName, err)
-	}
-
-	return nil
+	return fmt.Errorf("unknown output type '%s'", outputType)
 }

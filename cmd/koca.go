@@ -13,6 +13,7 @@ import (
 
 var cliOpts struct {
 	internalPackage bool
+	outputType      string
 }
 
 var rootCmd = &cobra.Command{
@@ -31,6 +32,9 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.Flags().BoolVar(&cliOpts.internalPackage, "internal-package", false, "[INTERNAL] start packaging stage")
 	rootCmd.Flags().MarkHidden("internal-package")
+	rootCmd.Flags().StringVar(&cliOpts.outputType, "output-type", "", "output type (deb, rpm)")
+
+	rootCmd.Flags()
 }
 
 // Run a Koca session, returning if any haltable errors occurred.
@@ -61,7 +65,7 @@ func runSession(buildFile string) bool {
 			parsedBuildFile.Maintainer.Name,
 			parsedBuildFile.Maintainer.Address,
 		)
-		if err := runner.RunPackage(parsedBuildFile.Funcs.PackageFunc, &parsedBuildFile.Vars, maintainer); err != nil {
+		if err := runner.RunPackage(parsedBuildFile.Funcs.PackageFunc, &parsedBuildFile.Vars, maintainer, cliOpts.outputType); err != nil {
 			logging.Err("failed to run packaging: %w", err)
 			return false
 		}
