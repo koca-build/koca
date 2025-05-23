@@ -19,7 +19,7 @@ pub enum Arch {
 pub struct Version {
     /// The version's package version segment (`1.0.0` in `1.0.0-2`).
     pub pkgver: String,
-    /// The version's package releationship segment (`2` in `1.0.0-2`).
+    /// The version's package release segment (`2` in `1.0.0-2`).
     pub pkgrel: u32,
     /// The version's epoch segment (`3` in `1.0.0-3`).
     pub epoch: Option<u32>,
