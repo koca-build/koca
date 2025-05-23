@@ -1,0 +1,15 @@
+[package]
+name = "cli"
+version.workspace = true
+edition.workspace = true
+description = "The Koca library"
+
+[[bin]]
+name = "koca"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+koca = { workspace = true }
+tokio = { workspace = true }

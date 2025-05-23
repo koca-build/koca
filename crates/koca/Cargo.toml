@@ -1,0 +1,9 @@
+[package]
+name = "koca"
+version.workspace = true
+edition.workspace = true
+description = "The Koca library"
+
+[dependencies]
+brush = { workspace = true }
+thiserror = { workspace = true }
