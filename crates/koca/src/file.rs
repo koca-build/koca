@@ -53,7 +53,7 @@ impl BuildFile {
         let create_options = Self::create_options();
         let shell = Shell::new(&create_options).await.unwrap();
         shell.parse_bytes(bytes)?;
-        todo!("Fully process the build file boi");
+        todo!("Fully process the build file properly");
     }
 
     /// Read a Koca build script from the input string.

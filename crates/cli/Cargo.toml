@@ -2,7 +2,7 @@
 name = "cli"
 version.workspace = true
 edition.workspace = true
-description = "The Koca library"
+description = "The Koca command-line interface (CLI) tool"
 
 [[bin]]
 name = "koca"
