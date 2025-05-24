@@ -62,15 +62,10 @@ impl BuildFile {
         let decl_items = parser::get_decls(&program)?;
 
         // Print the variables and functions.
-        for (name, value) in decl_items.vars {
-            match value {
-                DeclValue::String(s) => println!("{} = {}", name, s),
-                DeclValue::Array(a) => println!("{} = {:?}", name, a),
-            }
-        }
-        for func in decl_items.funcs {
-            println!("Function: {}", func.fname);
-        }
+        println!(
+            "{:?}",
+            brush_parser::word::parse_brace_expansions("hi=$(wow;", &Default::default())
+        );
 
         todo!()
     }

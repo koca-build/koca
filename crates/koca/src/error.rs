@@ -21,6 +21,9 @@ pub enum KocaParserError {
     /// An assignment was made on a variable that was already defined.
     #[error("A variable was defined more than once: {0}")]
     DuplicateAssignment(Assignment),
+    /// A variable that isn't allowed to perform expansion attempted to do so.
+    #[error("The '{0}' variable attempted to perform expansion, but isn't allowed to do so")]
+    InvalidExpansion(String),
 }
 
 /// Errors that can occur in the Koca library.
