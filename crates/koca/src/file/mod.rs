@@ -1,5 +1,8 @@
-use crate::KocaResult;
+mod parser;
+
+use crate::{KocaParserError, KocaResult};
 use brush::{CreateOptions, Shell};
+use parser::DeclValue;
 use std::{fs, path::Path};
 
 /// A package's architecture.
@@ -51,9 +54,25 @@ impl BuildFile {
     /// Returns a [`KocaError::Parser`] error if the input is an invalid script.
     pub async fn from_bytes<B: Into<Vec<u8>>>(bytes: B) -> KocaResult<Self> {
         let create_options = Self::create_options();
-        let shell = Shell::new(&create_options).await.unwrap();
-        shell.parse_bytes(bytes)?;
-        todo!("Fully process the build file properly");
+        let shell = Shell::new(&create_options)
+            .await
+            .expect("shell options should be valid");
+
+        let program = shell.parse_bytes(bytes).map_err(KocaParserError::from)?;
+        let decl_items = parser::get_decls(&program)?;
+
+        // Print the variables and functions.
+        for (name, value) in decl_items.vars {
+            match value {
+                DeclValue::String(s) => println!("{} = {}", name, s),
+                DeclValue::Array(a) => println!("{} = {:?}", name, a),
+            }
+        }
+        for func in decl_items.funcs {
+            println!("Function: {}", func.fname);
+        }
+
+        todo!()
     }
 
     /// Read a Koca build script from the input string.
