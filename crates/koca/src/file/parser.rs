@@ -3,6 +3,8 @@
 //! This doesn't do any static checking outside of ensuring a build file only contains the following in the root level:
 //! - Variable assignments
 //! - Function declarations
+use std::collections::HashMap;
+
 use brush_parser::ast::{
     AssignmentName, AssignmentValue, Command, CommandPrefixOrSuffixItem, CompoundListItem,
     FunctionDefinition, Program, Word,
@@ -18,12 +20,30 @@ pub enum DeclValue {
     Array(Vec<Word>),
 }
 
+impl DeclValue {
+    /// If the [`DeclValue`] is a word, return the word. Otherwise, returns [`None`].
+    pub fn as_word(&self) -> Option<&Word> {
+        match self {
+            DeclValue::String(word) => Some(word),
+            DeclValue::Array(_) => None,
+        }
+    }
+
+    /// If the [`DeclValue`] is an array, return the array. Otherwise, returns [`None`].
+    pub fn as_array(&self) -> Option<&[Word]> {
+        match self {
+            DeclValue::String(_) => None,
+            DeclValue::Array(array) => Some(array),
+        }
+    }
+}
+
 /// The items that were declared in the currrent [`CompoundListItem`].
 ///
 /// To get this from a [`CompoundListItem`], use [`Decl::try_from`].
 enum Decl {
     /// Declared variables, in a tuple of `key` and `value`.
-    Vars(Vec<(String, DeclValue)>),
+    Vars(HashMap<String, DeclValue>),
     /// A function was declared.
     Func(FunctionDefinition),
 }
@@ -31,7 +51,7 @@ enum Decl {
 /// The items found in the list of [`CompoundListItem`]s.
 pub struct DeclItems {
     /// The declared variables.
-    pub vars: Vec<(String, DeclValue)>,
+    pub vars: HashMap<String, DeclValue>,
     /// The functions declared.
     pub funcs: Vec<FunctionDefinition>,
 }
@@ -43,6 +63,7 @@ impl TryFrom<&CompoundListItem> for Decl {
     /// - String variable assignments (`var=me`).
     /// - Index array assignments (`var=(1 2 3)`).
     /// - Function definitions.
+    /// - Non-duplicate variable assignments.
     ///
     /// Anything outside of the above will trigger a [`KocaError::Parser`] error.
     fn try_from(item: &CompoundListItem) -> KocaResult<Self> {
@@ -85,7 +106,7 @@ impl TryFrom<&CompoundListItem> for Decl {
             .prefix
             .as_ref()
             .expect("prefix should be present at this point");
-        let mut assignments = vec![];
+        let mut assignments = HashMap::new();
 
         for prefix_item in &prefix.0 {
             let assignment = match prefix_item {
@@ -96,12 +117,12 @@ impl TryFrom<&CompoundListItem> for Decl {
                 CommandPrefixOrSuffixItem::AssignmentWord(assignment, _) => assignment.to_owned(),
                 CommandPrefixOrSuffixItem::ProcessSubstitution(_, _) => return top_level_err(),
             };
-            let assignment_err =
+            let invalid_assignment_err =
                 || Err(KocaParserError::InvalidAssignment(assignment.clone()).into());
 
             let name = match &assignment.name {
                 AssignmentName::VariableName(name) => name.to_owned(),
-                AssignmentName::ArrayElementName(_, _) => return assignment_err(),
+                AssignmentName::ArrayElementName(_, _) => return invalid_assignment_err(),
             };
 
             let value = match &assignment.value {
@@ -115,14 +136,16 @@ impl TryFrom<&CompoundListItem> for Decl {
                         .collect();
 
                     if values.len() != array.len() {
-                        return assignment_err();
+                        return invalid_assignment_err();
                     }
 
                     DeclValue::Array(values)
                 }
             };
 
-            assignments.push((name, value));
+            if assignments.insert(name, value).is_some() {
+                return Err(KocaParserError::DuplicateAssignment(assignment).into());
+            }
         }
 
         Ok(Decl::Vars(assignments))
@@ -138,7 +161,7 @@ pub fn get_decls(program: &Program) -> KocaResult<DeclItems> {
         items.append(&mut line_items);
     }
 
-    let mut vars = vec![];
+    let mut vars = HashMap::new();
     let mut funcs = vec![];
 
     for item in items {

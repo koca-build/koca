@@ -7,4 +7,5 @@ description = "The Koca library"
 [dependencies]
 brush = { workspace = true }
 brush-parser = { workspace = true }
+itertools = "0.14.0"
 thiserror = { workspace = true }

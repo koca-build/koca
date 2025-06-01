@@ -4,7 +4,10 @@ use std::io;
 use thiserror::Error;
 
 /// A [`Result<T, KocaError>`] type alias.
-pub type KocaResult<T> = std::result::Result<T, KocaError>;
+pub type KocaResult<T> = Result<T, KocaError>;
+
+/// A [`Result<T, Vec<KocaError>>`] type alias.
+pub type KocaMultiResult<T> = Result<T, Vec<KocaError>>;
 
 /// Error that occur while parsing a Koca build file.
 #[derive(Error, Debug)]
@@ -24,6 +27,18 @@ pub enum KocaParserError {
     /// A variable that isn't allowed to perform expansion attempted to do so.
     #[error("The '{0}' variable attempted to perform expansion, but isn't allowed to do so")]
     InvalidExpansion(String),
+    /// A variable was expected to be a string, but was not.
+    #[error("The '{0}' variable was expected to be a string, but was not")]
+    NotString(String),
+    /// A variable was expected to be an array, but was not.
+    #[error("The '{0}' variable was expected to be an array, but was not")]
+    NotArray(String),
+    /// An invalid string was specified for a version.
+    #[error("'{0}' is not a valid version")]
+    InvalidVersion(String),
+    /// An invalid string was specified for an architecture.
+    #[error("'{0}' is not a valid architecture")]
+    InvalidArch(String),
 }
 
 /// Errors that can occur in the Koca library.

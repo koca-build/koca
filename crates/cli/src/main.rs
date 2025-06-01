@@ -27,12 +27,8 @@ enum Cli {
 }
 
 async fn run_build(build_args: &BuildArgs) -> anyhow::Result<()> {
-    let build_file = BuildFile::from_file(&build_args.build_file)
-        .await
-        .context(format!(
-            "Failed to read build file: `{}`",
-            build_args.build_file.display()
-        ))?;
+    let build_file = BuildFile::parse_file(&build_args.build_file).await;
+    todo!("Need to handle error output with the terminal output libray hunter wrote !!");
     Ok(())
 }
 
