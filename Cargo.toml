@@ -1,7 +1,18 @@
-[package]
-name = "koca"
+[workspace]
+resolver = "2"
+members = ["crates/koca", "crates/cli"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
 
-[dependencies]
+[workspace.dependencies]
+anyhow = "1.0.98"
+# brush = { package = "brush-core", version = "=0.3.1" }
+# brush-parser = "=0.2.16"
+brush = { package = "brush-core", path = "../../hwittenborn/brush/brush-core" }
+brush-parser = { path = "../../hwittenborn/brush/brush-parser" }
 clap = { version = "4.5.37", features = ["derive", "env"] }
+koca = { path = "crates/koca" }
+thiserror = "2.0.12"
+tokio = "1.45.0"
