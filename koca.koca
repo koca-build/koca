@@ -2,6 +2,7 @@
 pkgname="koca"
 pkgver=0.1.0
 pkgrel=1
+epoch=5
 pkgdesc='A modern, universal, and system-native package manager'
 arch=('any')
 

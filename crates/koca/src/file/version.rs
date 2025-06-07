@@ -36,7 +36,7 @@ impl FromStr for Version {
         }
 
         // Check for epoch.
-        if let Some((epoch, remaining)) = value.split_once(EPOCH_SEPARATOR) {
+        if let Some((epoch, remaining)) = str_segment.split_once(EPOCH_SEPARATOR) {
             str_segment = remaining;
 
             match epoch.parse() {
@@ -48,7 +48,7 @@ impl FromStr for Version {
         }
 
         // Check for pkgrel.
-        if let Some((remaining, pkgrel)) = value.split_once(PKGREL_SEPARATOR) {
+        if let Some((remaining, pkgrel)) = str_segment.split_once(PKGREL_SEPARATOR) {
             str_segment = remaining;
 
             match pkgrel.parse() {
