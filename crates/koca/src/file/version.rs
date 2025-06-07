@@ -23,7 +23,6 @@ impl FromStr for Version {
     /// Returns [`KocaParserError::InvalidVersion`] if the string is not a valid version.
     fn from_str(value: &str) -> KocaResult<Self> {
         let mut str_segment = value;
-        let mut opt_pkgver: Option<String> = None;
         let mut opt_pkgrel: Option<u32> = None;
         let mut opt_epoch: Option<u32> = None;
 
@@ -42,17 +41,21 @@ impl FromStr for Version {
 
             match epoch.parse() {
                 Ok(value) => opt_epoch = Some(value),
-                Err(_) => return version_err(),
+                Err(_) => {
+                    return version_err();
+                }
             }
         }
 
         // Check for pkgrel.
-        if let Some((pkgrel, remaining)) = value.split_once(PKGREL_SEPARATOR) {
+        if let Some((remaining, pkgrel)) = value.split_once(PKGREL_SEPARATOR) {
             str_segment = remaining;
 
             match pkgrel.parse() {
                 Ok(value) => opt_pkgrel = Some(value),
-                Err(_) => return version_err(),
+                Err(_) => {
+                    return version_err();
+                }
             }
         }
 

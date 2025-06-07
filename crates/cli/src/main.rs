@@ -1,4 +1,3 @@
-use anyhow::Context;
 use clap::{Parser, ValueEnum};
 use koca::BuildFile;
 use std::path::PathBuf;
@@ -27,8 +26,19 @@ enum Cli {
 }
 
 async fn run_build(build_args: &BuildArgs) -> anyhow::Result<()> {
-    let build_file = BuildFile::parse_file(&build_args.build_file).await;
-    todo!("Need to handle error output with the terminal output libray hunter wrote !!");
+    let build_file = match BuildFile::parse_file(&build_args.build_file).await {
+        Ok(file) => file,
+        Err(errs) => {
+            for err in errs {
+                println!("{:?}", anyhow::Error::from(err));
+            }
+            todo!()
+        }
+    };
+
+    println!("PKGNAME: {}", build_file.pkgname());
+    println!("VERSION: {}", build_file.version());
+    println!("ARCH: {:?}", build_file.arch());
     Ok(())
 }
 

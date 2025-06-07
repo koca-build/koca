@@ -39,6 +39,12 @@ pub enum KocaParserError {
     /// An invalid string was specified for an architecture.
     #[error("'{0}' is not a valid architecture")]
     InvalidArch(String),
+    /// A required variable was not defined.
+    #[error("The variable '{0}' was not defined")]
+    MissingRequiredVaraible(String),
+    /// A required function was not defined.
+    #[error("The function '{0}' was not defined")]
+    MissingRequiredFunction(String),
 }
 
 /// Errors that can occur in the Koca library.
