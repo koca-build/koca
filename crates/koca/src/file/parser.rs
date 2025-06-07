@@ -38,7 +38,7 @@ impl DeclValue {
     }
 }
 
-/// The items that were declared in the currrent [`CompoundListItem`].
+/// The items that were declared in the current [`CompoundListItem`].
 ///
 /// To get this from a [`CompoundListItem`], use [`Decl::try_from`].
 enum Decl {
