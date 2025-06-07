@@ -41,7 +41,7 @@ pub enum KocaParserError {
     InvalidArch(String),
     /// A required variable was not defined.
     #[error("The variable '{0}' was not defined")]
-    MissingRequiredVaraible(String),
+    MissingRequiredVariable(String),
     /// A required function was not defined.
     #[error("The function '{0}' was not defined")]
     MissingRequiredFunction(String),

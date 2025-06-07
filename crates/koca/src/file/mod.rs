@@ -185,7 +185,7 @@ impl BuildFile {
 
         for (var_name, is_set) in required_vars {
             if !is_set {
-                errs.push(KocaParserError::MissingRequiredVaraible(var_name.to_string()).into());
+                errs.push(KocaParserError::MissingRequiredVariable(var_name.to_string()).into());
             }
         }
 
