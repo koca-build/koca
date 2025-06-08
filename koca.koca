@@ -7,9 +7,9 @@ pkgdesc='A modern, universal, and system-native package manager'
 arch=('any')
 
 build() {
-  echo build
+  true
 }
 
 package() {
-  echo package
+  echo "echo 'The Koca program was built!'" | install -Dm 755 /dev/stdin "${pkgdir}/usr/bin/koca-example"
 }

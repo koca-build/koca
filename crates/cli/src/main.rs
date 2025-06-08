@@ -1,6 +1,15 @@
 use clap::{Parser, ValueEnum};
 use koca::BuildFile;
 use std::path::PathBuf;
+use zolt::Colorize;
+
+mod bins;
+mod build;
+mod dirs;
+mod error;
+mod http;
+
+use error::CliError;
 
 #[derive(Clone, ValueEnum)]
 enum OutputType {
@@ -25,30 +34,17 @@ enum Cli {
     Build(BuildArgs),
 }
 
-async fn run_build(build_args: &BuildArgs) -> anyhow::Result<()> {
-    let build_file = match BuildFile::parse_file(&build_args.build_file).await {
-        Ok(file) => file,
-        Err(errs) => {
-            for err in errs {
-                println!("{:?}", anyhow::Error::from(err));
-            }
-            todo!()
-        }
-    };
-
-    println!("PKGNAME: {}", build_file.pkgname());
-    println!("VERSION: {}", build_file.version());
-    println!("ARCH: {:?}", build_file.arch());
-    Ok(())
-}
-
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
     let cli = Cli::parse();
 
-    match cli {
-        Cli::Build(build_args) => run_build(&build_args).await?,
-    }
+    let output = match cli {
+        Cli::Build(build_args) => build::run(build_args).await,
+    };
 
-    Ok(())
+    if let Err(errs) = output {
+        for err in errs.0 {
+            zolt::errln!("{:?}", anyhow::Error::from(err));
+        }
+    }
 }

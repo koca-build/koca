@@ -4,15 +4,42 @@ mod version;
 
 use crate::{KocaMultiResult, KocaParserError, KocaResult};
 pub use arch::Arch;
-use brush::{CreateOptions, Shell};
+use brush::{env::EnvironmentScope, CreateOptions, Shell, ShellVariable};
 use brush_parser::{ast::FunctionDefinition, word::WordPiece};
 use itertools::Itertools;
 use parser::DeclValue;
-use std::{fs::File, io::Read, path::Path, str::FromStr};
-pub use version::Version;
+use std::{
+    fs::{self, File},
+    io::Read,
+    mem,
+    path::{self, Path, PathBuf},
+    str::FromStr,
+};
+pub use version::{PkgVersion, Version};
+
+/// Koca build file options.
+pub struct BuildFileOpts {
+    /// The path to the `nfpm` binary (defaults to the one on the system's `PATH`).
+    pub nfpm: PathBuf,
+    /// The path to the `yq` binary (defaults to the one on the system's `PATH`).
+    pub yq: PathBuf,
+}
+
+impl Default for BuildFileOpts {
+    fn default() -> Self {
+        Self {
+            nfpm: PathBuf::from("nfpm"),
+            yq: PathBuf::from("yq"),
+        }
+    }
+}
 
 /// A package's Koca build file.
 pub struct BuildFile {
+    /// The [`Shell`] instance to use.
+    shell: Shell,
+    /// The [`BuildFileOpts`] to use.
+    opts: BuildFileOpts,
     /// The package's name.
     var_pkgname: String,
     /// The package's version.
@@ -117,7 +144,7 @@ impl BuildFile {
     /// Parse a Koca build script from the reader.
     ///
     /// Returns a [`KocaError::Parser`] error if the input is an invalid script.
-    pub async fn parse<R: Read>(reader: R) -> KocaMultiResult<Self> {
+    pub async fn parse<R: Read>(reader: R, opts: BuildFileOpts) -> KocaMultiResult<Self> {
         // Create the shell.
         let create_options = Self::create_options();
         let shell = Shell::new(&create_options)
@@ -226,6 +253,8 @@ impl BuildFile {
         }
 
         Ok(Self {
+            shell: shell,
+            opts: opts,
             var_pkgname: opt_pkgname.expect("pkgname should be set"),
             var_version: parsed_version.expect("version should be valid by this point"),
             var_arch: opt_arch.expect("arch should be set"),
@@ -239,10 +268,70 @@ impl BuildFile {
     /// Returns a:
     /// - [`KocaError::Parser`] error if the input is an invalid script.
     /// - [`KocaError::IO`] error if the input file can't be read.
-    pub async fn parse_file<P: AsRef<Path>>(path: P) -> KocaMultiResult<Self> {
+    pub async fn parse_file<P: AsRef<Path>>(path: P, opts: BuildFileOpts) -> KocaMultiResult<Self> {
         let file = File::open(path).map_err(|err| vec![err.into()])?;
-        Self::parse(file).await
+        Self::parse(file, opts).await
     }
+
+    /// Run the `build` function of the package.
+    ///
+    /// Returns a:
+    /// - [`KocaError::IO`] if the build directory couldn't be created.
+    /// - [`KocaError::Func`] if the `build` function failed to execute.
+    pub async fn run_build(&mut self) -> KocaResult<()> {
+        self.shell.funcs.clear();
+        self.shell.funcs.update(
+            self.build_func.fname.clone(),
+            self.build_func.clone().into(),
+        );
+
+        let existing_dir = mem::replace(&mut self.shell.working_dir, dirs::SRC.into());
+        fs::create_dir_all(dirs::SRC)?;
+
+        self.shell
+            .invoke_function(&self.build_func.fname, &[])
+            .await?;
+        self.shell.working_dir = existing_dir;
+
+        Ok(())
+    }
+
+    /// Run the `package` function of the package.
+    /// /// Returns a:
+    /// - [`KocaError::IO`] if the package directory couldn't be created.
+    /// - [`KocaError::Func`] if the `package` function failed to execute.
+    pub async fn run_package(&mut self) -> KocaResult<()> {
+        self.shell.funcs.clear();
+        self.shell.funcs.update(
+            self.package_func.fname.clone(),
+            self.package_func.clone().into(),
+        );
+
+        let existing_dir = mem::replace(&mut self.shell.working_dir, dirs::SRC.into());
+        fs::create_dir_all(dirs::PKG)?;
+
+        let absolute_pkgdir = path::absolute(dirs::PKG)
+            .expect("directory should exist at this point")
+            .to_string_lossy()
+            .into_owned();
+        self.shell
+            .env
+            .add(
+                "pkgdir",
+                ShellVariable::new(absolute_pkgdir.into()),
+                EnvironmentScope::Global,
+            )
+            .expect("shell adding shouldn't fail");
+
+        self.shell
+            .invoke_function(&self.package_func.fname, &[])
+            .await?;
+        self.shell.working_dir = existing_dir;
+
+        Ok(())
+    }
+
+    /// Run
 
     /// Get the package's name.
     pub fn pkgname(&self) -> &str {
@@ -261,7 +350,7 @@ impl BuildFile {
 }
 
 /// A mapping of `const` variable names to their stringified values.
-mod vars {
+pub mod vars {
     pub const PKGNAME: &str = "pkgname";
     pub const PKGVER: &str = "pkgver";
     pub const PKGREL: &str = "pkgrel";
@@ -270,7 +359,15 @@ mod vars {
 }
 
 /// A mapping of `const` function names to their stringified values.
-mod funcs {
+pub mod funcs {
     pub const BUILD: &str = "build";
     pub const PACKAGE: &str = "package";
+}
+
+/// The directories used by Koca.
+mod dirs {
+    /// The directory where Koca stores source files.
+    pub const SRC: &str = "koca/src";
+    /// The directory where Koca stores package files.
+    pub const PKG: &str = "koca/pkg";
 }
