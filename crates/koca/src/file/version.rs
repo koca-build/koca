@@ -148,8 +148,8 @@ impl PartialOrd for Version {
 
         // First check if one epoch is bigger than the other.
         let self_epoch = self.epoch.unwrap_or(0);
-        let other_epoch = self.epoch.unwrap_or(0);
-        let epoch_order = self.partial_cmp(other).expect("epoch should be comparable");
+        let other_epoch = other.epoch.unwrap_or(0);
+        let epoch_order = self_epoch.partial_cmp(&other_epoch).expect("epoch should be comparable");
 
         if epoch_order != Ordering::Equal {
             return Some(epoch_order);
