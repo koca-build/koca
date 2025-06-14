@@ -440,7 +440,7 @@ impl BuildFile {
             .wait_with_output()
             .expect("should always be able to wait for nfpm output");
 
-        if output.status.success() {
+        if !output.status.success() {
             let mut total_output = output.stdout;
             total_output.extend(output.stderr);
 
