@@ -59,7 +59,7 @@ pub fn needs_install() -> bool {
     };
 
     if !version_output.status.success() {
-        return false;
+        return true;
     }
 
     // Parse out the version from yq.
