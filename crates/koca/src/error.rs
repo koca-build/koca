@@ -1,6 +1,6 @@
+use crate::KocaFunction;
 pub use brush::{Error as BrushError, ParseError as BrushParseError};
 use brush_parser::ast::Assignment;
-use core::error;
 use std::io;
 use thiserror::Error;
 
@@ -63,4 +63,12 @@ pub enum KocaError {
     /// A binary Koca needs to run was unable to be found.
     #[error("The binary '{0}' was not found in the PATH")]
     MissingBinary(String),
+    /// A binary Koca used didn't run successfully.
+    /// - The first string is the name of the binary.
+    /// - The second string is the output of the binary.
+    #[error("The binary '{0}' did not run succesfully")]
+    UnsuccessfulBinary(String, String),
+    /// An error occurred while executing a Koca build file function.
+    #[error("Failed to execute function '{0}'")]
+    FuncError(KocaFunction),
 }

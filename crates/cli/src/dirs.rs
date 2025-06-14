@@ -1,10 +1,5 @@
 //! Configuration directories used in Koca.
-use std::{
-    fs,
-    io::{self, ErrorKind},
-    path::PathBuf,
-    sync::LazyLock,
-};
+use std::{fs, path::PathBuf, sync::LazyLock};
 
 use directories::ProjectDirs;
 
@@ -21,7 +16,7 @@ pub fn cache_dir() -> CliResult<PathBuf> {
     if let Err(err) = fs::create_dir_all(&dir) {
         return Err(CliError::CacheDir {
             path: dir.clone(),
-            err: err,
+            err,
         });
     }
 
@@ -35,7 +30,7 @@ pub fn cache_binary_dir() -> CliResult<PathBuf> {
     if let Err(err) = fs::create_dir_all(&dir) {
         return Err(CliError::CacheBinDir {
             path: dir.clone(),
-            err: err,
+            err,
         });
     };
 

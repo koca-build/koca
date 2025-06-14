@@ -3,7 +3,7 @@ use std::{fmt, str::FromStr};
 use crate::{KocaError, KocaParserError, KocaResult};
 
 /// A package's architecture. This can be created from a string using the [`Arch::try_from`] method.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Arch {
     /// The `all` architecture:
     /// The source package is architecture-agnostic, but the built package is tied to a specific architecture (i.e. a compiled C program).

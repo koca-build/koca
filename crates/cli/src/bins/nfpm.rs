@@ -1,12 +1,9 @@
 //! Utilities to interact with [`nfpm`](https://github.com/goreleaser/nfpm).
 use crate::{dirs, error::CliResult, http, CliError};
 use flate2::read::GzDecoder;
-use koca::{PkgVersion, Version};
+use koca::PkgVersion;
 use regex::Regex;
-use std::{
-    cell::LazyCell, fs, ops::Deref, path::PathBuf, process::Command, str::FromStr, sync::LazyLock,
-};
-use zolt::Colorize;
+use std::{ops::Deref, path::PathBuf, process::Command, str::FromStr, sync::LazyLock};
 
 /// `nfpm` string as a constant.
 pub const BIN_NAME: &str = "nfpm";
@@ -15,12 +12,18 @@ pub const BIN_NAME: &str = "nfpm";
 pub const VERSION: &str = "2.43.0";
 
 /// the URL to download the `nfpm` binary from.
-pub const DOWNLOAD_URL: LazyCell<String> = LazyCell::new(|| {
+pub static DOWNLOAD_URL: LazyLock<String> = LazyLock::new(|| {
     format!("https://github.com/goreleaser/nfpm/releases/download/v{VERSION}/nfpm_{VERSION}_Linux_x86_64.tar.gz")
 });
 
 /// The regex to get the version out of `nfpm -v` output.
-const VERSION_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new("^GitVersion: *(.*)$").unwrap());
+static VERSION_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new("^GitVersion: *(.*)$").unwrap());
+
+/// Get the binary path for `nfpm`.
+pub fn bin_path() -> CliResult<PathBuf> {
+    Ok(dirs::cache_binary_dir()?.join(BIN_NAME))
+}
 
 /// Download the `nfpm` binary if it doesn't already exist, and return the data of the downloaded binary.
 pub async fn download() -> CliResult<Vec<u8>> {
@@ -45,13 +48,13 @@ pub async fn download() -> CliResult<Vec<u8>> {
 /// Check if `nfpm` is either not present, or not at the required version.
 pub fn needs_install() -> bool {
     // If unable to get the cache dir, get the binary.
-    let bin_path = match dirs::cache_binary_dir() {
-        Ok(path) => path.join(BIN_NAME),
-        Err(err) => return true,
+    let install_path = match bin_path() {
+        Ok(path) => path,
+        Err(_) => return true,
     };
 
     // If unable to query nfpm for its version, get the binary.
-    let version_output = match Command::new(&bin_path).arg("-v").output() {
+    let version_output = match Command::new(&install_path).arg("-v").output() {
         Ok(output) => output,
         Err(_) => return true,
     };
@@ -82,7 +85,7 @@ pub fn needs_install() -> bool {
 
 /// Place the given binary data into the nfpm install location, returning the binary's path.
 pub fn install(data: &[u8]) -> CliResult<PathBuf> {
-    let bin_path = dirs::cache_binary_dir()?.join(BIN_NAME);
+    let install_path = bin_path()?;
 
     // Unpack the gzip archive.
     let gz_decoder = GzDecoder::new(data);
@@ -100,14 +103,14 @@ pub fn install(data: &[u8]) -> CliResult<PathBuf> {
             .to_string();
 
         if file_name == BIN_NAME {
-            if let Err(err) = entry.unpack(&bin_path) {
+            if let Err(err) = entry.unpack(&install_path) {
                 return Err(CliError::InstallBinary {
                     bin_name: BIN_NAME.into(),
                     err,
                 });
             }
 
-            return Ok(bin_path);
+            return Ok(install_path);
         }
     }
 

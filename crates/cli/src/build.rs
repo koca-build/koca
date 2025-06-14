@@ -4,16 +4,31 @@ use koca::{BuildFile, BuildFileOpts};
 
 use crate::{
     bins,
-    error::{CliError, CliMultiError, CliMultiResult, CliResult},
-    BuildArgs,
+    error::{CliError, CliMultiError, CliMultiResult},
+    BuildArgs, OutputType,
 };
 use zolt::Colorize;
 
 // Run a build.
 pub async fn run(build_args: BuildArgs) -> CliMultiResult<()> {
     // Default to the system's binaries for needed programs.
-    let mut nfpm_path = PathBuf::from(bins::nfpm::BIN_NAME);
-    let mut yq_path = PathBuf::from(bins::yq::BIN_NAME);
+    let mut errs = vec![];
+
+    let mut nfpm_path = PathBuf::new();
+    let mut yq_path = PathBuf::new();
+
+    match bins::nfpm::bin_path() {
+        Ok(path) => nfpm_path = path,
+        Err(err) => errs.push(err),
+    };
+    match bins::yq::bin_path() {
+        Ok(path) => yq_path = path,
+        Err(err) => errs.push(err),
+    };
+
+    if !errs.is_empty() {
+        return Err(CliMultiError(errs));
+    }
 
     // If `nfpm` isn't installed or isn't a valid version for us, download it.
     if bins::nfpm::needs_install() {
@@ -67,7 +82,30 @@ pub async fn run(build_args: BuildArgs) -> CliMultiResult<()> {
         return Err(CliError::Koca { err }.into());
     }
 
-    koca::bundle::nfpm::get_nfpm_files(Path::new("koca/pkg"));
+    // Run the bundle stage.
+    let file_extension = match build_args.output_type {
+        OutputType::Deb => "deb",
+        OutputType::Rpm => "rpm",
+    };
+    let file_name = format!(
+        "{}_{}.{}",
+        build_file.pkgname(),
+        build_file.version(),
+        file_extension
+    );
+
+    zolt::infoln!("Bundling package into ./{}...", file_name.blue().bold());
+    let bundle_res = build_file
+        .bundle(
+            build_args.output_type.to_bundle_format(),
+            Path::new(&file_name),
+        )
+        .await;
+    if let Err(err) = bundle_res {
+        return Err(CliError::Koca { err }.into());
+    }
+
+    zolt::infoln!("Package bundled successfully.");
 
     Ok(())
 }

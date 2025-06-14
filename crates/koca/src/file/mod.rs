@@ -2,18 +2,24 @@ mod arch;
 mod parser;
 mod version;
 
-use crate::{KocaMultiResult, KocaParserError, KocaResult};
+use crate::{
+    nfpm::{self, NfpmConfig},
+    KocaError, KocaMultiResult, KocaParserError, KocaResult,
+};
 pub use arch::Arch;
 use brush::{env::EnvironmentScope, CreateOptions, Shell, ShellVariable};
 use brush_parser::{ast::FunctionDefinition, word::WordPiece};
 use itertools::Itertools;
 use parser::DeclValue;
 use std::{
+    fmt,
     fs::{self, File},
-    io::Read,
+    io::{Read, Write},
     mem,
     path::{self, Path, PathBuf},
+    process::{Command, Stdio},
     str::FromStr,
+    thread,
 };
 pub use version::{PkgVersion, Version};
 
@@ -34,6 +40,42 @@ impl Default for BuildFileOpts {
     }
 }
 
+/// The output bundle format.
+pub enum BundleFormat {
+    /// A `.deb` package.
+    Deb,
+    /// A `.rpm` package.
+    Rpm,
+}
+
+impl BundleFormat {
+    /// Convert the output type to a `nfpm` bundle format.
+    pub fn to_nfpm_format(&self) -> &str {
+        match self {
+            BundleFormat::Deb => "deb",
+            BundleFormat::Rpm => "rpm",
+        }
+    }
+}
+
+/// A Koca build file function.
+#[derive(Debug)]
+pub enum KocaFunction {
+    /// The `build` function.
+    Build,
+    /// The `package` function.
+    Package,
+}
+
+impl fmt::Display for KocaFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            KocaFunction::Build => write!(f, "build"),
+            KocaFunction::Package => write!(f, "package"),
+        }
+    }
+}
+
 /// A package's Koca build file.
 pub struct BuildFile {
     /// The [`Shell`] instance to use.
@@ -46,6 +88,8 @@ pub struct BuildFile {
     var_version: Version,
     /// The package's architecture.
     var_arch: Vec<Arch>,
+    /// The package's description.
+    var_pkgdesc: String,
     /// The package's `build` function.
     build_func: FunctionDefinition,
     /// The package's `package` function.
@@ -161,6 +205,7 @@ impl BuildFile {
         let mut opt_pkgrel: Option<String> = None;
         let mut opt_epoch: Option<String> = None;
         let mut opt_arch: Option<Vec<Arch>> = None;
+        let mut opt_pkgdesc: Option<String> = None;
 
         let mut opt_build_func: Option<FunctionDefinition> = None;
         let mut opt_package_func: Option<FunctionDefinition> = None;
@@ -190,6 +235,10 @@ impl BuildFile {
                     Ok(archs) => opt_arch = Some(archs),
                     Err(arch_errs) => errs.extend(arch_errs),
                 },
+                vars::PKGDESC => match Self::get_decl_string(vars::PKGDESC, value) {
+                    Ok(pkgdesc) => opt_pkgdesc = Some(pkgdesc),
+                    Err(err) => errs.push(err),
+                },
                 _ => continue,
             }
         }
@@ -208,6 +257,7 @@ impl BuildFile {
             (vars::PKGNAME, opt_pkgname.is_some()),
             (vars::PKGVER, opt_pkgver.is_some()),
             (vars::ARCH, opt_arch.is_some()),
+            (vars::PKGDESC, opt_pkgdesc.is_some()),
         ];
 
         for (var_name, is_set) in required_vars {
@@ -253,11 +303,12 @@ impl BuildFile {
         }
 
         Ok(Self {
-            shell: shell,
-            opts: opts,
+            shell,
+            opts,
             var_pkgname: opt_pkgname.expect("pkgname should be set"),
             var_version: parsed_version.expect("version should be valid by this point"),
             var_arch: opt_arch.expect("arch should be set"),
+            var_pkgdesc: opt_pkgdesc.expect("pkgdesc should be set"),
             build_func: opt_build_func.expect("build function should be set"),
             package_func: opt_package_func.expect("package function should be set"),
         })
@@ -288,9 +339,14 @@ impl BuildFile {
         let existing_dir = mem::replace(&mut self.shell.working_dir, dirs::SRC.into());
         fs::create_dir_all(dirs::SRC)?;
 
-        self.shell
+        let exit_code = self
+            .shell
             .invoke_function(&self.build_func.fname, &[])
             .await?;
+        if exit_code != 0 {
+            return Err(KocaError::FuncError(KocaFunction::Build));
+        }
+
         self.shell.working_dir = existing_dir;
 
         Ok(())
@@ -323,15 +379,79 @@ impl BuildFile {
             )
             .expect("shell adding shouldn't fail");
 
-        self.shell
+        let exit_code = self
+            .shell
             .invoke_function(&self.package_func.fname, &[])
             .await?;
+        if exit_code != 0 {
+            return Err(KocaError::FuncError(KocaFunction::Package));
+        }
         self.shell.working_dir = existing_dir;
 
         Ok(())
     }
 
-    /// Run
+    /// Bundle the package into the given file format.
+    pub async fn bundle(&self, format: BundleFormat, out_file: &Path) -> KocaResult<()> {
+        let config = NfpmConfig {
+            name: self.var_pkgname.clone(),
+            // TODO: We need to figure out what architecture should properly be used at runtime of the built package.
+            arch: self.var_arch[0].to_string(),
+            // TODO: We'll need to modify this when we support Windows/macOS in the future.
+            platform: "linux".to_string(),
+            epoch: self.var_version.epoch,
+            version: self.var_version.pkgver.to_string(),
+            release: self.var_version.pkgrel,
+            // TODO: We need to get the maintainer from the build file.
+            // Dependent on https://github.com/reubeno/brush/issues/513.
+            maintainer: "Foo Bar <foobar@example.com>".to_string(),
+            description: self.var_pkgdesc.clone(),
+            // TODO: We need to check for this somehow - figure out what the build file implementation looks like.
+            license: "CONTACT-PUBLISHER".to_string(),
+            contents: nfpm::get_nfpm_files(Path::new(dirs::PKG)),
+        };
+        let config_yaml = config.to_yaml(&self.opts.yq);
+
+        // Build with `nfpm`.
+        let mut child = Command::new(&self.opts.nfpm)
+            .args([
+                "packages",
+                "-f",
+                "-",
+                "-p",
+                format.to_nfpm_format(),
+                "-t",
+                &out_file.display().to_string(),
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("should always be able to spawn nfpm");
+
+        let mut stdin = child
+            .stdin
+            .take()
+            .expect("should always be able to get stdin");
+        thread::spawn(move || {
+            write!(stdin, "{config_yaml}").expect("should always be able to write to stdin");
+        });
+        let output = child
+            .wait_with_output()
+            .expect("should always be able to wait for nfpm output");
+
+        if output.status.success() {
+            let mut total_output = output.stdout;
+            total_output.extend(output.stderr);
+
+            Err(KocaError::UnsuccessfulBinary(
+                "nfpm".to_string(),
+                String::from_utf8(total_output).expect("output should be valid UTF-8"),
+            ))
+        } else {
+            Ok(())
+        }
+    }
 
     /// Get the package's name.
     pub fn pkgname(&self) -> &str {
@@ -347,6 +467,11 @@ impl BuildFile {
     pub fn arch(&self) -> &[Arch] {
         &self.var_arch
     }
+
+    /// Get the package's description.
+    pub fn pkgdesc(&self) -> &str {
+        &self.var_pkgdesc
+    }
 }
 
 /// A mapping of `const` variable names to their stringified values.
@@ -356,6 +481,7 @@ pub mod vars {
     pub const PKGREL: &str = "pkgrel";
     pub const EPOCH: &str = "epoch";
     pub const ARCH: &str = "arch";
+    pub const PKGDESC: &str = "pkgdesc";
 }
 
 /// A mapping of `const` function names to their stringified values.

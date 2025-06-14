@@ -1,7 +1,8 @@
+#![allow(clippy::result_large_err)]
+
 use clap::{Parser, ValueEnum};
-use koca::BuildFile;
+use koca::BundleFormat;
 use std::path::PathBuf;
-use zolt::Colorize;
 
 mod bins;
 mod build;
@@ -17,6 +18,16 @@ enum OutputType {
     Deb,
     /// The ".rpm" output type.
     Rpm,
+}
+
+impl OutputType {
+    /// Get the bundle format for this output type.
+    fn to_bundle_format(&self) -> BundleFormat {
+        match self {
+            Self::Deb => BundleFormat::Deb,
+            Self::Rpm => BundleFormat::Rpm,
+        }
+    }
 }
 
 #[derive(Parser)]

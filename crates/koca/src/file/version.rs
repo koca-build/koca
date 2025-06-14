@@ -5,7 +5,7 @@ static EPOCH_SEPARATOR: &str = ":";
 static PKGREL_SEPARATOR: &str = "-";
 
 /// A package's `pkgver` component.
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct PkgVersion {
     /// The major version component.
     pub major: u32,
@@ -63,7 +63,7 @@ impl PartialOrd for PkgVersion {
 }
 
 /// A package's version.
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Version {
     /// The version's package version segment (`1.0.0` in `1.0.0-2`).
     pub pkgver: PkgVersion,
@@ -149,7 +149,9 @@ impl PartialOrd for Version {
         // First check if one epoch is bigger than the other.
         let self_epoch = self.epoch.unwrap_or(0);
         let other_epoch = other.epoch.unwrap_or(0);
-        let epoch_order = self_epoch.partial_cmp(&other_epoch).expect("epoch should be comparable");
+        let epoch_order = self_epoch
+            .partial_cmp(&other_epoch)
+            .expect("epoch should be comparable");
 
         if epoch_order != Ordering::Equal {
             return Some(epoch_order);
@@ -167,9 +169,6 @@ impl PartialOrd for Version {
         // Lastly, compare against pkgrel if all else fails.
         let self_pkgrel = self.pkgrel.unwrap_or(0);
         let other_pkgrel = other.pkgrel.unwrap_or(0);
-        let pkgrel_order = self_pkgrel
-            .partial_cmp(&other_pkgrel)
-            .expect("pkgrel should be comparable");
 
         self_pkgrel.partial_cmp(&other_pkgrel)
     }

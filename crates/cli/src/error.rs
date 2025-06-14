@@ -1,5 +1,5 @@
 use koca::KocaError;
-use std::{fmt, io, ops::Deref, path::PathBuf};
+use std::{io, path::PathBuf};
 use zolt::Colorize;
 
 use thiserror::Error;
@@ -47,15 +47,6 @@ pub enum CliError {
 
 /// A list of [`CliError`] instances.
 pub struct CliMultiError(pub Vec<CliError>);
-
-impl CliMultiError {
-    /// Print all error messages, along with their backtraces.
-    pub fn print(&self) {
-        for err in &self.0 {
-            eprintln!("")
-        }
-    }
-}
 
 impl From<CliError> for CliMultiError {
     fn from(value: CliError) -> Self {
