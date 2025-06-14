@@ -5,7 +5,7 @@ use koca::BundleFormat;
 use std::path::PathBuf;
 
 mod bins;
-mod build;
+mod create;
 mod dirs;
 mod error;
 mod http;
@@ -31,7 +31,7 @@ impl OutputType {
 }
 
 #[derive(Parser)]
-struct BuildArgs {
+struct CreateArgs {
     /// The path to the build file.
     build_file: PathBuf,
     /// The output file type.
@@ -41,8 +41,8 @@ struct BuildArgs {
 
 #[derive(Parser)]
 enum Cli {
-    /// Build a package.
-    Build(BuildArgs),
+    /// Create a package from a build script.
+    Create(CreateArgs),
 }
 
 #[tokio::main]
@@ -50,7 +50,7 @@ async fn main() {
     let cli = Cli::parse();
 
     let output = match cli {
-        Cli::Build(build_args) => build::run(build_args).await,
+        Cli::Create(create_args) => create::run(create_args).await,
     };
 
     if let Err(errs) = output {

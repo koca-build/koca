@@ -5,12 +5,12 @@ use koca::{BuildFile, BuildFileOpts};
 use crate::{
     bins,
     error::{CliError, CliMultiError, CliMultiResult},
-    BuildArgs, OutputType,
+    CreateArgs, OutputType,
 };
 use zolt::Colorize;
 
-// Run a build.
-pub async fn run(build_args: BuildArgs) -> CliMultiResult<()> {
+// Run a bundle.
+pub async fn run(create_args: CreateArgs) -> CliMultiResult<()> {
     // Default to the system's binaries for needed programs.
     let mut errs = vec![];
 
@@ -61,7 +61,7 @@ pub async fn run(build_args: BuildArgs) -> CliMultiResult<()> {
         nfpm: nfpm_path,
         yq: yq_path,
     };
-    let mut build_file = match BuildFile::parse_file(&build_args.build_file, build_opts).await {
+    let mut build_file = match BuildFile::parse_file(&create_args.build_file, build_opts).await {
         Ok(file) => file,
         Err(errs) => {
             return Err(CliMultiError(
@@ -83,7 +83,7 @@ pub async fn run(build_args: BuildArgs) -> CliMultiResult<()> {
     }
 
     // Run the bundle stage.
-    let file_extension = match build_args.output_type {
+    let file_extension = match create_args.output_type {
         OutputType::Deb => "deb",
         OutputType::Rpm => "rpm",
     };
@@ -97,7 +97,7 @@ pub async fn run(build_args: BuildArgs) -> CliMultiResult<()> {
     zolt::infoln!("Bundling package into ./{}...", file_name.blue().bold());
     let bundle_res = build_file
         .bundle(
-            build_args.output_type.to_bundle_format(),
+            create_args.output_type.to_bundle_format(),
             Path::new(&file_name),
         )
         .await;
