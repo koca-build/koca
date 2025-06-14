@@ -1,7 +1,7 @@
 #![allow(clippy::result_large_err)]
 
 use clap::{Parser, ValueEnum};
-use koca::BundleFormat;
+use koca::{BundleFormat, KocaError};
 use std::path::PathBuf;
 
 mod bins;
@@ -55,6 +55,13 @@ async fn main() {
 
     if let Err(errs) = output {
         for err in errs.0 {
+            // If we have output from a Koca-used binary, print it.
+            if let CliError::Koca { err: koca_err } = &err {
+                if let KocaError::UnsuccessfulBinary(_, output) = koca_err {
+                    println!("{output}");
+                }
+            }
+
             zolt::errln!("{:?}", anyhow::Error::from(err));
         }
     }

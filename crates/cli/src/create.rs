@@ -94,7 +94,11 @@ pub async fn run(create_args: CreateArgs) -> CliMultiResult<()> {
         file_extension
     );
 
-    zolt::infoln!("Bundling package into ./{}...", file_name.blue().bold());
+    zolt::infoln!(
+        "Creating package into {}{}...",
+        "./".blue().bold(),
+        file_name.blue().bold()
+    );
     let bundle_res = build_file
         .bundle(
             create_args.output_type.to_bundle_format(),
@@ -105,7 +109,7 @@ pub async fn run(create_args: CreateArgs) -> CliMultiResult<()> {
         return Err(CliError::Koca { err }.into());
     }
 
-    zolt::infoln!("Package bundled successfully.");
+    zolt::infoln!("Package created successfully.");
 
     Ok(())
 }

@@ -19,5 +19,6 @@ target/
 # Added by cargo
 /target
 
-# Koca build directory
+# Koca outputs
 koca/
+*.deb

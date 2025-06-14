@@ -415,7 +415,7 @@ impl BuildFile {
         // Build with `nfpm`.
         let mut child = Command::new(&self.opts.nfpm)
             .args([
-                "packages",
+                "package",
                 "-f",
                 "-",
                 "-p",
