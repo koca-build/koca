@@ -17,5 +17,8 @@ target/
 #.idea/
 
 # Added by cargo
-
 /target
+
+# Koca outputs
+koca/
+*.deb

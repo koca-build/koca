@@ -8,4 +8,8 @@ description = "The Koca library"
 brush = { workspace = true }
 brush-parser = { workspace = true }
 itertools = "0.14.0"
+semver = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
+walkdir = { workspace = true }

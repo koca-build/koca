@@ -1,6 +1,16 @@
+#![allow(clippy::result_large_err)]
+
 use clap::{Parser, ValueEnum};
-use koca::BuildFile;
+use koca::{BundleFormat, KocaError};
 use std::path::PathBuf;
+
+mod bins;
+mod create;
+mod dirs;
+mod error;
+mod http;
+
+use error::CliError;
 
 #[derive(Clone, ValueEnum)]
 enum OutputType {
@@ -10,8 +20,18 @@ enum OutputType {
     Rpm,
 }
 
+impl OutputType {
+    /// Get the bundle format for this output type.
+    fn to_bundle_format(&self) -> BundleFormat {
+        match self {
+            Self::Deb => BundleFormat::Deb,
+            Self::Rpm => BundleFormat::Rpm,
+        }
+    }
+}
+
 #[derive(Parser)]
-struct BuildArgs {
+struct CreateArgs {
     /// The path to the build file.
     build_file: PathBuf,
     /// The output file type.
@@ -21,34 +41,29 @@ struct BuildArgs {
 
 #[derive(Parser)]
 enum Cli {
-    /// Build a package.
-    Build(BuildArgs),
-}
-
-async fn run_build(build_args: &BuildArgs) -> anyhow::Result<()> {
-    let build_file = match BuildFile::parse_file(&build_args.build_file).await {
-        Ok(file) => file,
-        Err(errs) => {
-            for err in errs {
-                println!("{:?}", anyhow::Error::from(err));
-            }
-            todo!()
-        }
-    };
-
-    println!("PKGNAME: {}", build_file.pkgname());
-    println!("VERSION: {}", build_file.version());
-    println!("ARCH: {:?}", build_file.arch());
-    Ok(())
+    /// Create a package from a build script.
+    Create(CreateArgs),
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
     let cli = Cli::parse();
 
-    match cli {
-        Cli::Build(build_args) => run_build(&build_args).await?,
-    }
+    let output = match cli {
+        Cli::Create(create_args) => create::run(create_args).await,
+    };
 
-    Ok(())
+    if let Err(errs) = output {
+        for err in errs.0 {
+            // If we have output from a Koca-used binary, print it.
+            if let CliError::Koca {
+                err: KocaError::UnsuccessfulBinary(_, output),
+            } = &err
+            {
+                println!("{output}");
+            }
+
+            zolt::errln!("{:?}", anyhow::Error::from(err));
+        }
+    }
 }

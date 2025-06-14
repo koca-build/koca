@@ -11,5 +11,12 @@ path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
+directories = { workspace = true }
+flate2 = { workspace = true }
 koca = { workspace = true }
+regex = { workspace = true }
+reqwest = { workspace = true }
+tar = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true }
+zolt = { workspace = true }

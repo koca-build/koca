@@ -1,15 +1,14 @@
 # Maintainer: Hunter Wittenborn <hunter@hunterwittenborn.com>
-pkgname="koca"
+pkgname="koca-example"
 pkgver=0.1.0
 pkgrel=1
-epoch=5
 pkgdesc='A modern, universal, and system-native package manager'
-arch=('any')
+arch=('all')
 
 build() {
-  echo build
+  echo "echo 'The Koca example was built!'" > koca-example.sh
 }
 
 package() {
-  echo package
+  install -Dm 755 ./koca-example.sh "${pkgdir}/usr/bin/koca-example"
 }

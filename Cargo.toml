@@ -13,6 +13,18 @@ anyhow = "1.0.98"
 brush = { package = "brush-core", path = "../../hwittenborn/brush/brush-core" }
 brush-parser = { path = "../../hwittenborn/brush/brush-parser" }
 clap = { version = "4.5.37", features = ["derive", "env"] }
+directories = "6.0.0"
+flate2 = "1.1.2"
 koca = { path = "crates/koca" }
+semver = "1.0.26"
 thiserror = "2.0.12"
+tar = "0.4.44"
 tokio = "1.45.0"
+zolt = "0.7.2"
+regex = "1.11.1"
+reqwest = { version = "0.12.19", default-features = false, features = [
+    "rustls-tls",
+] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+walkdir = "2.5.0"

@@ -1,3 +1,4 @@
+use crate::KocaFunction;
 pub use brush::{Error as BrushError, ParseError as BrushParseError};
 use brush_parser::ast::Assignment;
 use std::io;
@@ -13,7 +14,7 @@ pub type KocaMultiResult<T> = Result<T, Vec<KocaError>>;
 #[derive(Error, Debug)]
 pub enum KocaParserError {
     /// An error while tokenizing the input.
-    #[error("Failed to parse Koca build file")]
+    #[error("Found a syntax error")]
     Tokenizer(#[from] BrushParseError),
     /// A top-level command was provided.
     #[error("A top-level command was provided: {0}")]
@@ -56,4 +57,18 @@ pub enum KocaError {
     /// An error doing an I/O operation.
     #[error("Failed to perform I/O operation")]
     IO(#[from] io::Error),
+    /// An error occurred while executing a function.
+    #[error("Failed to execute function")]
+    FuncExec(#[from] BrushError),
+    /// A binary Koca needs to run was unable to be found.
+    #[error("The binary '{0}' was not found in the PATH")]
+    MissingBinary(String),
+    /// A binary Koca used didn't run successfully.
+    /// - The first string is the name of the binary.
+    /// - The second string is the output of the binary.
+    #[error("The binary '{0}' did not run successfully")]
+    UnsuccessfulBinary(String, String),
+    /// An error occurred while executing a Koca build file function.
+    #[error("Failed to execute function '{0}'")]
+    FuncError(KocaFunction),
 }
