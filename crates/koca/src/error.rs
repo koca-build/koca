@@ -66,7 +66,7 @@ pub enum KocaError {
     /// A binary Koca used didn't run successfully.
     /// - The first string is the name of the binary.
     /// - The second string is the output of the binary.
-    #[error("The binary '{0}' did not run succesfully")]
+    #[error("The binary '{0}' did not run successfully")]
     UnsuccessfulBinary(String, String),
     /// An error occurred while executing a Koca build file function.
     #[error("Failed to execute function '{0}'")]
