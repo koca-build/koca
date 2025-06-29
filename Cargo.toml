@@ -8,12 +8,8 @@ edition = "2021"
 
 [workspace.dependencies]
 anyhow = "1.0.98"
-#brush = { package = "brush-core", version = "=0.3.1" }
-#brush-parser = "=0.2.16"
-#brush = { package = "brush-core", path = "../../hwittenborn/brush/brush-core" }
-#brush-parser = { path = "../../hwittenborn/brush/brush-parser" }
-brush = { package = "brush-core", git = "https://github.com/hwittenborn/brush", branch = "custom-changes" }
-brush-parser = { git = "https://github.com/hwittenborn/brush", branch = "custom-changes" }
+brush = { package = "brush-core", version = "=0.3.2" }
+brush-parser = "=0.2.17"
 clap = { version = "4.5.37", features = ["derive", "env"] }
 directories = "6.0.0"
 flate2 = "1.1.2"

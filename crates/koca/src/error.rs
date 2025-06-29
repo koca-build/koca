@@ -1,6 +1,6 @@
 use crate::KocaFunction;
-pub use brush::{Error as BrushError, ParseError as BrushParseError};
-use brush_parser::ast::Assignment;
+pub use brush::Error as BrushError;
+use brush_parser::{ast::Assignment, ParseError as BrushParseError};
 use std::io;
 use thiserror::Error;
 
