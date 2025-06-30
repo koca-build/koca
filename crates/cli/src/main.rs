@@ -1,16 +1,11 @@
 #![allow(clippy::result_large_err)]
 
 use clap::{Parser, ValueEnum};
-use koca::{BundleFormat, KocaError};
+use koca::BundleFormat;
 use std::path::PathBuf;
 
-mod bins;
 mod create;
-mod dirs;
 mod error;
-mod http;
-
-use error::CliError;
 
 #[derive(Clone, ValueEnum)]
 enum OutputType {
@@ -55,14 +50,6 @@ async fn main() {
 
     if let Err(errs) = output {
         for err in errs.0 {
-            // If we have output from a Koca-used binary, print it.
-            if let CliError::Koca {
-                err: KocaError::UnsuccessfulBinary(_, output),
-            } = &err
-            {
-                println!("{output}");
-            }
-
             zolt::errln!("{:?}", anyhow::Error::from(err));
         }
     }
