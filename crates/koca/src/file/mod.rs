@@ -10,35 +10,17 @@ pub use arch::Arch;
 use brush::{env::EnvironmentScope, CreateOptions, Shell, ShellVariable};
 use brush_parser::{ast::FunctionDefinition, word::WordPiece};
 use itertools::Itertools;
+use nfpm_cgo::NfpmError;
 use parser::DeclValue;
 use std::{
     fmt,
     fs::{self, File},
-    io::{Read, Write},
+    io::Read,
     mem,
-    path::{self, Path, PathBuf},
-    process::{Command, Stdio},
+    path::{self, Path},
     str::FromStr,
-    thread,
 };
 pub use version::{PkgVersion, Version};
-
-/// Koca build file options.
-pub struct BuildFileOpts {
-    /// The path to the `nfpm` binary (defaults to the one on the system's `PATH`).
-    pub nfpm: PathBuf,
-    /// The path to the `yq` binary (defaults to the one on the system's `PATH`).
-    pub yq: PathBuf,
-}
-
-impl Default for BuildFileOpts {
-    fn default() -> Self {
-        Self {
-            nfpm: PathBuf::from("nfpm"),
-            yq: PathBuf::from("yq"),
-        }
-    }
-}
 
 /// The output bundle format.
 pub enum BundleFormat {
@@ -80,8 +62,6 @@ impl fmt::Display for KocaFunction {
 pub struct BuildFile {
     /// The [`Shell`] instance to use.
     shell: Shell,
-    /// The [`BuildFileOpts`] to use.
-    opts: BuildFileOpts,
     /// The package's name.
     var_pkgname: String,
     /// The package's version.
@@ -188,7 +168,7 @@ impl BuildFile {
     /// Parse a Koca build script from the reader.
     ///
     /// Returns a [`KocaError::Parser`] error if the input is an invalid script.
-    pub async fn parse<R: Read>(reader: R, opts: BuildFileOpts) -> KocaMultiResult<Self> {
+    pub async fn parse<R: Read>(reader: R) -> KocaMultiResult<Self> {
         // Create the shell.
         let create_options = Self::create_options();
         let shell = Shell::new(&create_options)
@@ -304,7 +284,6 @@ impl BuildFile {
 
         Ok(Self {
             shell,
-            opts,
             var_pkgname: opt_pkgname.expect("pkgname should be set"),
             var_version: parsed_version.expect("version should be valid by this point"),
             var_arch: opt_arch.expect("arch should be set"),
@@ -319,9 +298,9 @@ impl BuildFile {
     /// Returns a:
     /// - [`KocaError::Parser`] error if the input is an invalid script.
     /// - [`KocaError::IO`] error if the input file can't be read.
-    pub async fn parse_file<P: AsRef<Path>>(path: P, opts: BuildFileOpts) -> KocaMultiResult<Self> {
+    pub async fn parse_file<P: AsRef<Path>>(path: P) -> KocaMultiResult<Self> {
         let file = File::open(path).map_err(|err| vec![err.into()])?;
-        Self::parse(file, opts).await
+        Self::parse(file).await
     }
 
     /// Run the `build` function of the package.
@@ -410,47 +389,32 @@ impl BuildFile {
             license: "CONTACT-PUBLISHER".to_string(),
             contents: nfpm::get_nfpm_files(Path::new(dirs::PKG)),
         };
-        let config_yaml = config.to_yaml(&self.opts.yq);
+        let config_json =
+            serde_json::to_string(&config).expect("build config should be valid json");
+
+        // Make sure we can access the build file.
+        // our nFPM bindings check for this too, but it's hard to get the error out of it.
+        if let Err(err) = File::create(out_file) {
+            return Err(err.into());
+        }
 
         // Build with `nfpm`.
-        let mut child = Command::new(&self.opts.nfpm)
-            .args([
-                "package",
-                "-f",
-                "-",
-                "-p",
-                format.to_nfpm_format(),
-                "-t",
-                &out_file.display().to_string(),
-            ])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("should always be able to spawn nfpm");
+        let nfpm_res = nfpm_cgo::run_bundle(
+            &out_file.display().to_string(),
+            format.to_nfpm_format(),
+            &config_json,
+        );
 
-        let mut stdin = child
-            .stdin
-            .take()
-            .expect("should always be able to get stdin");
-        thread::spawn(move || {
-            write!(stdin, "{config_yaml}").expect("should always be able to write to stdin");
-        });
-        let output = child
-            .wait_with_output()
-            .expect("should always be able to wait for nfpm output");
-
-        if !output.status.success() {
-            let mut total_output = output.stdout;
-            total_output.extend(output.stderr);
-
-            Err(KocaError::UnsuccessfulBinary(
-                "nfpm".to_string(),
-                String::from_utf8(total_output).expect("output should be valid UTF-8"),
-            ))
-        } else {
-            Ok(())
+        if let Err(err) = nfpm_res {
+            match err {
+                NfpmError::JSON => unreachable!("build config should always deserialize"),
+                NfpmError::OutputFile => {
+                    unreachable!("build file should have been checked earlier")
+                }
+                NfpmError::PkgCreation => unreachable!("package creation should always work"),
+            }
         }
+        Ok(())
     }
 
     /// Get the package's name.

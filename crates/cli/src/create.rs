@@ -1,9 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use koca::{BuildFile, BuildFileOpts};
+use koca::BuildFile;
 
 use crate::{
-    bins,
     error::{CliError, CliMultiError, CliMultiResult},
     CreateArgs, OutputType,
 };
@@ -11,57 +10,7 @@ use zolt::Colorize;
 
 // Run a bundle.
 pub async fn run(create_args: CreateArgs) -> CliMultiResult<()> {
-    // Default to the system's binaries for needed programs.
-    let mut errs = vec![];
-
-    let mut nfpm_path = PathBuf::new();
-    let mut yq_path = PathBuf::new();
-
-    match bins::nfpm::bin_path() {
-        Ok(path) => nfpm_path = path,
-        Err(err) => errs.push(err),
-    };
-    match bins::yq::bin_path() {
-        Ok(path) => yq_path = path,
-        Err(err) => errs.push(err),
-    };
-
-    if !errs.is_empty() {
-        return Err(CliMultiError(errs));
-    }
-
-    // If `nfpm` isn't installed or isn't a valid version for us, download it.
-    if bins::nfpm::needs_install() {
-        zolt::infoln!("Caching {}...", bins::nfpm::BIN_NAME.blue().bold());
-        let nfpm_bin = match bins::nfpm::download().await {
-            Ok(bytes) => bytes,
-            Err(err) => return Err(err.into()),
-        };
-        match bins::nfpm::install(&nfpm_bin) {
-            Ok(path) => nfpm_path = path,
-            Err(err) => return Err(err.into()),
-        }
-    }
-
-    // If `yq` isn't installed or isn't a valid version for us, download it.
-    if bins::yq::needs_install() {
-        zolt::infoln!("Caching {}...", bins::yq::BIN_NAME.blue().bold());
-        let yq_bin = match bins::yq::download().await {
-            Ok(bytes) => bytes,
-            Err(err) => return Err(err.into()),
-        };
-        match bins::yq::install(&yq_bin) {
-            Ok(path) => yq_path = path,
-            Err(err) => return Err(err.into()),
-        }
-    }
-
-    // Parse the build file.
-    let build_opts = BuildFileOpts {
-        nfpm: nfpm_path,
-        yq: yq_path,
-    };
-    let mut build_file = match BuildFile::parse_file(&create_args.build_file, build_opts).await {
+    let mut build_file = match BuildFile::parse_file(&create_args.build_file).await {
         Ok(file) => file,
         Err(errs) => {
             return Err(CliMultiError(

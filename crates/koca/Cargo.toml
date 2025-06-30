@@ -8,6 +8,7 @@ description = "The Koca library"
 brush = { workspace = true }
 brush-parser = { workspace = true }
 itertools = "0.14.0"
+nfpm-cgo = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
