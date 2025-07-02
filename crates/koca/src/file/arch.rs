@@ -36,20 +36,20 @@ impl FromStr for Arch {
 
 impl Arch {
     /// Display the [`Arch`] as a string.
-    pub fn get_string(&self) -> String {
-        String::from(match self {
+    pub fn get_string(&self) -> &'static str {
+        match self {
             Arch::All => "all",
             Arch::Any => "any",
             Arch::X86_64 => "x86_64",
-        })
+        }
     }
 
     /// Display the [`Arch`] as a Debian-based architecture string.
-    pub fn get_deb_string(&self) -> String {
-        String::from(match self {
+    pub fn get_deb_string(&self) -> &'static str {
+        match self {
             Arch::All => "all",
             Arch::Any => "any",
             Arch::X86_64 => "amd64",
-        })
+        }
     }
 }
