@@ -1,4 +1,4 @@
-# Maintainer: Hunter Wittenborn
+# Maintainer: Koca <contact@koca.dev>
 pkgname=koca
 pkgver=0.1.0
 pkgrel=1
@@ -19,5 +19,6 @@ build() {
 }
 
 package() {
+    cd "${pkgname}/"
     install -Dm 755 "target/release/${pkgname}" "${pkgdir}/usr/bin/${pkgname}"
 }
