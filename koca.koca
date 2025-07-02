@@ -9,7 +9,7 @@ build() {
     git_dir="$(git rev-parse --show-toplevel)"
 
     if [[ -d "${pkgname}/" ]]; then
-        git pull
+        git -C "${pkgname}" pull
     else
         git clone "${git_dir}" "${pkgname}/"
     fi
