@@ -414,7 +414,7 @@ impl BuildFile {
         let config = NfpmConfig {
             name: self.var_pkgname.clone(),
             // TODO: We need to figure out what architecture should properly be used at runtime of the built package.
-            arch: system_arch,
+            arch: system_arch.to_owned(),
             // TODO: We'll need to modify this when we support Windows/macOS in the future.
             platform: "linux".to_string(),
             epoch: self.var_version.epoch,
