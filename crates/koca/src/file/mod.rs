@@ -13,7 +13,8 @@ use itertools::Itertools;
 use nfpm_cgo::NfpmError;
 use parser::DeclValue;
 use std::{
-    fmt,
+    collections::HashMap,
+    env, fmt,
     fs::{self, File},
     io::Read,
     mem,
@@ -62,6 +63,8 @@ impl fmt::Display for KocaFunction {
 pub struct BuildFile {
     /// The [`Shell`] instance to use.
     shell: Shell,
+    /// The raw list of defined variables.
+    vars: HashMap<String, DeclValue>,
     /// The package's name.
     var_pkgname: String,
     /// The package's version.
@@ -107,7 +110,7 @@ impl BuildFile {
     }
 
     /// Parse a [`DeclValue::String`] into the variables actual value, with single/double quotes removed.
-    fn get_decl_string(var_name: &str, value: DeclValue) -> KocaResult<String> {
+    fn get_decl_string(var_name: &str, value: &DeclValue) -> KocaResult<String> {
         let string_value = &value
             .as_word()
             .ok_or(KocaParserError::NotString(var_name.to_string()))?
@@ -124,7 +127,7 @@ impl BuildFile {
     }
 
     /// Parse a [`DeclValue`] into an `arch`.
-    fn parse_arch(value: DeclValue) -> KocaMultiResult<Vec<Arch>> {
+    fn parse_arch(value: &DeclValue) -> KocaMultiResult<Vec<Arch>> {
         let mut errs = vec![];
         let mut archs = vec![];
 
@@ -193,7 +196,7 @@ impl BuildFile {
         let mut errs = vec![];
 
         // Extract variables.
-        for (key, value) in decl_items.vars {
+        for (key, value) in &decl_items.vars {
             match key.as_str() {
                 vars::PKGNAME => match Self::get_decl_string(vars::PKGNAME, value) {
                     Ok(pkgname) => opt_pkgname = Some(pkgname),
@@ -284,6 +287,7 @@ impl BuildFile {
 
         Ok(Self {
             shell,
+            vars: decl_items.vars,
             var_pkgname: opt_pkgname.expect("pkgname should be set"),
             var_version: parsed_version.expect("version should be valid by this point"),
             var_arch: opt_arch.expect("arch should be set"),
@@ -303,6 +307,34 @@ impl BuildFile {
         Self::parse(file).await
     }
 
+    /// Add environment variables to the environment.
+    fn add_vars(&mut self) {
+        // Add inherited vars.
+        for (key, var) in env::vars() {
+            let mut shell_var = ShellVariable::new(var.into());
+            shell_var.export();
+            self.shell
+                .set_env_global(&key, shell_var)
+                .expect("setting environment variable shouldn't fail");
+        }
+
+        // Add built-in vars.
+        for (key, var) in &self.vars {
+            let shell_var = match var {
+                DeclValue::String(val) => ShellVariable::new(val.value.clone().into()),
+                DeclValue::Array(vals) => {
+                    let string_values: Vec<String> =
+                        vals.iter().map(|word| word.value.clone()).collect();
+                    ShellVariable::new(string_values.into())
+                }
+            };
+
+            self.shell
+                .set_env_global(key, shell_var)
+                .expect("setting environment variable shouldn't fail");
+        }
+    }
+
     /// Run the `build` function of the package.
     ///
     /// Returns a:
@@ -314,6 +346,8 @@ impl BuildFile {
             self.build_func.fname.clone(),
             self.build_func.clone().into(),
         );
+
+        self.add_vars();
 
         let existing_dir = mem::replace(&mut self.shell.working_dir, dirs::SRC.into());
         fs::create_dir_all(dirs::SRC)?;
@@ -372,10 +406,15 @@ impl BuildFile {
 
     /// Bundle the package into the given file format.
     pub async fn bundle(&self, format: BundleFormat, out_file: &Path) -> KocaResult<()> {
+        let system_arch = match format {
+            BundleFormat::Deb => self.var_arch[0].get_deb_string(),
+            BundleFormat::Rpm => self.var_arch[0].get_string(),
+        };
+
         let config = NfpmConfig {
             name: self.var_pkgname.clone(),
             // TODO: We need to figure out what architecture should properly be used at runtime of the built package.
-            arch: self.var_arch[0].to_string(),
+            arch: system_arch.to_owned(),
             // TODO: We'll need to modify this when we support Windows/macOS in the future.
             platform: "linux".to_string(),
             epoch: self.var_version.epoch,
