@@ -20,5 +20,5 @@ target/
 /target
 
 # Koca outputs
-koca/
+/koca/
 *.deb

@@ -1,0 +1,23 @@
+# Maintainer: Hunter Wittenborn
+pkgname=koca
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='A modern, universal, and system-native package manager'
+arch=('x86_64')
+
+build() {
+    git_dir="$(git rev-parse --show-toplevel)"
+
+    if [[ -d "${pkgname}/" ]]; then
+        git pull
+    else
+        git clone "${git_dir}" "${pkgname}/"
+    fi
+
+    cd "${pkgname}/"
+    cargo build --release --bin "${pkgname}"
+}
+
+package() {
+    install -Dm 755 "target/release/${pkgname}" "${pkgdir}/usr/bin/${pkgname}"
+}
