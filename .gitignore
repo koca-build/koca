@@ -22,3 +22,4 @@ target/
 # Koca outputs
 /koca/
 *.deb
+*.rpm
