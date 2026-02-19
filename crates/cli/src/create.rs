@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use koca::BuildFile;
+use koca::{BuildFile, BundleFormat};
 
 use crate::{
     error::{CliError, CliMultiError, CliMultiResult},
@@ -32,33 +32,35 @@ pub async fn run(create_args: CreateArgs) -> CliMultiResult<()> {
     }
 
     // Run the bundle stage.
-    let file_extension = match create_args.output_type {
-        OutputType::Deb => "deb",
-        OutputType::Rpm => "rpm",
+    let output_targets = match create_args.output_type {
+        OutputType::Deb => vec![(BundleFormat::Deb, "deb")],
+        OutputType::Rpm => vec![(BundleFormat::Rpm, "rpm")],
+        OutputType::All => vec![(BundleFormat::Deb, "deb"), (BundleFormat::Rpm, "rpm")],
     };
-    let file_name = format!(
-        "{}_{}.{}",
-        build_file.pkgname(),
-        build_file.version(),
-        file_extension
-    );
 
-    zolt::infoln!(
-        "Creating package into {}{}...",
-        "./".blue().bold(),
-        file_name.blue().bold()
-    );
-    let bundle_res = build_file
-        .bundle(
-            create_args.output_type.to_bundle_format(),
-            Path::new(&file_name),
-        )
-        .await;
-    if let Err(err) = bundle_res {
-        return Err(CliError::Koca { err }.into());
+    for (bundle_format, file_extension) in output_targets {
+        let file_name = format!(
+            "{}_{}.{}",
+            build_file.pkgname(),
+            build_file.version(),
+            file_extension
+        );
+
+        zolt::infoln!(
+            "Creating package into {}{}...",
+            "./".blue().bold(),
+            file_name.blue().bold()
+        );
+
+        if let Err(err) = build_file
+            .bundle(bundle_format, Path::new(&file_name))
+            .await
+        {
+            return Err(CliError::Koca { err }.into());
+        }
     }
 
-    zolt::infoln!("Package created successfully.");
+    zolt::infoln!("Package(s) created successfully.");
 
     Ok(())
 }
