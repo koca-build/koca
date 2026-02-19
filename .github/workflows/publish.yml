@@ -59,13 +59,9 @@ jobs:
             echo "release_tag=${TAG}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build .deb package
+      - name: Build packages
         if: steps.tag_check.outputs.tag_exists == 'false'
-        run: cargo run --locked --bin koca -- create koca.koca --output-type deb
-
-      - name: Build .rpm package
-        if: steps.tag_check.outputs.tag_exists == 'false'
-        run: cargo run --locked --bin koca -- create koca.koca --output-type rpm
+        run: cargo run --locked --bin koca -- create koca.koca --output-type all
 
       - name: Collect package artifacts
         if: steps.tag_check.outputs.tag_exists == 'false'
