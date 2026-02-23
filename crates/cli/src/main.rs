@@ -21,7 +21,7 @@ struct CreateArgs {
     /// The path to the build file.
     build_file: PathBuf,
     /// The output file type.
-    #[arg(long, value_enum, default_value_t = OutputType::Deb)]
+    #[arg(long, value_enum, default_value_t = OutputType::All)]
     output_type: OutputType,
 }
 

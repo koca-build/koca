@@ -1,6 +1,5 @@
 # Koca
 [![Crates.io](https://img.shields.io/crates/v/koca)](https://crates.io/crates/koca)
-[![npm](https://img.shields.io/npm/v/%40koca-build%2Fcli)](https://www.npmjs.com/package/@koca-build/cli)
 [![GHCR](https://img.shields.io/badge/ghcr-koca-blue)](https://github.com/koca-build/koca/pkgs/container/koca)
 
 **The universal build, package, and publishing tool.**
@@ -48,11 +47,21 @@ koca create claude-code.koca --output-type all
 
 ### Installation
 
-You can install the Koca CLI via `cargo` or the [GitHub releases](https://github.com/koca-build/koca/releases/).
+#### GitHub Releases
+You can download the latest pre-built binaries for your platform from the [GitHub releases](https://github.com/koca-build/koca/releases/) page.
+
+#### Via Cargo
+If you have Rust and Cargo installed, you can build and install Koca from source:
 
 ```bash
-# Via Cargo
 cargo install koca-cli
+```
+
+#### Via Docker
+You can also run Koca as a Docker container:
+
+```bash
+docker run --rm -v $(pwd):/workspace ghcr.io/koca-build/koca create /workspace/your-app.koca
 ```
 
 ### Usage
@@ -60,7 +69,7 @@ cargo install koca-cli
 The `create` command is the primary way to build packages:
 
 ```bash
-# Create a .deb package (default)
+# Create .deb and .rpm packages (default)
 koca create your-app.koca
 
 # Create an .rpm package
