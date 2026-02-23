@@ -39,10 +39,17 @@ pub async fn run(create_args: CreateArgs) -> CliMultiResult<()> {
     };
 
     for (bundle_format, file_extension) in output_targets {
+        let arch = build_file.arch()[0].clone();
+        let arch_str = match bundle_format {
+            BundleFormat::Deb => arch.get_deb_string(),
+            BundleFormat::Rpm => arch.get_rpm_string(),
+        };
+
         let file_name = format!(
-            "{}_{}.{}",
+            "{}-{}-{}.{}",
             build_file.pkgname(),
             build_file.version(),
+            arch_str,
             file_extension
         );
 

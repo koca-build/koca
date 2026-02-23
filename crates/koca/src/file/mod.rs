@@ -408,7 +408,7 @@ impl BuildFile {
     pub async fn bundle(&self, format: BundleFormat, out_file: &Path) -> KocaResult<()> {
         let system_arch = match format {
             BundleFormat::Deb => self.var_arch[0].get_deb_string(),
-            BundleFormat::Rpm => self.var_arch[0].get_string(),
+            BundleFormat::Rpm => self.var_arch[0].get_rpm_string(),
         };
 
         let config = NfpmConfig {

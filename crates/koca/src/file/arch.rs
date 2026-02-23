@@ -6,10 +6,10 @@ use crate::{KocaError, KocaParserError, KocaResult};
 #[derive(Clone, Debug)]
 pub enum Arch {
     /// The `all` architecture:
-    /// The source package is architecture-agnostic, but the built package is tied to a specific architecture (i.e. a compiled C program).
+    /// The source package is architecture-agnostic, as well as the built package (i.e. a Python script).
     All,
     /// The `any` architecture:
-    /// The source package is architecture-agnostic, as well as the built package (i.e. a Python script).
+    /// The source package is architecture-agnostic, but the built package is tied to a specific architecture (i.e. a compiled C program).
     Any,
     /// The `x86_64` architecture (or `amd64` on Debian-based system):
     /// The source package requires a specific architecture, as well as the built package (i.e. a proprietary, prebuilt-executable built outside of the Koca build file).
@@ -48,8 +48,15 @@ impl Arch {
     pub fn get_deb_string(&self) -> &'static str {
         match self {
             Arch::All => "all",
-            Arch::Any => "any",
-            Arch::X86_64 => "amd64",
+            Arch::Any | Arch::X86_64 => "amd64",
+        }
+    }
+
+    /// Display the [`Arch`] as an RPM-based architecture string.
+    pub fn get_rpm_string(&self) -> &'static str {
+        match self {
+            Arch::All => "noarch",
+            Arch::Any | Arch::X86_64 => "x86_64",
         }
     }
 }
