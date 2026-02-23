@@ -1,6 +1,6 @@
 # Maintainer: Koca <contact@koca.dev>
 pkgname=koca
-pkgver=0.1.2
+pkgver=0.1.3
 pkgrel=1
 pkgdesc='A modern, universal, and system-native package manager'
 arch=('x86_64')
