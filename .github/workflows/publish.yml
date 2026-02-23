@@ -137,31 +137,31 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  publish_npm:
-    runs-on: ubuntu-latest
-    needs: prepare
-    if: needs.prepare.outputs.tag_exists == 'false'
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
-
-      - name: Publish @koca-build/cli
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd npm/cli
-          npm version "${{ needs.prepare.outputs.version }}" --no-git-tag-version --allow-same-version
-          npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+#  publish_npm:
+#    runs-on: ubuntu-latest
+#    needs: prepare
+#    if: needs.prepare.outputs.tag_exists == 'false'
+#    permissions:
+#      contents: read
+#    steps:
+#      - name: Checkout
+#        uses: actions/checkout@v4
+#
+#      - name: Setup Node.js
+#        uses: actions/setup-node@v4
+#        with:
+#          node-version: 22
+#          registry-url: https://registry.npmjs.org
+#
+#      - name: Publish @koca-build/cli
+#        shell: bash
+#        run: |
+#          set -euo pipefail
+#          cd npm/cli
+#          npm version "${{ needs.prepare.outputs.version }}" --no-git-tag-version --allow-same-version
+#          npm publish --access public
+#        env:
+#          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   publish_crates:
     runs-on: ubuntu-latest
