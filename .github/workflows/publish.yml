@@ -6,27 +6,45 @@ on:
       - main
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  publish:
+  prepare:
     runs-on: ubuntu-latest
-
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      tag_exists: ${{ steps.meta.outputs.tag_exists }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: stable
-          cache: false
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(cargo pkgid -p koca | awk -F'#' '{print $2}')"
+          TAG="v${VERSION}"
 
-      - name: Install yq
-        run: sudo snap install yq
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  github_release:
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.tag_exists == 'false'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -39,55 +57,131 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Check version tag
-        id: tag_check
+      - name: Build release artifacts
+        shell: bash
         run: |
-          VERSION="$(yq -r '.workspace.package.version' Cargo.toml)"
-          if [[ -z "$VERSION" ]]; then
-            echo "Failed to parse workspace version from Cargo.toml"
-            exit 1
-          fi
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          cargo run --locked --bin koca -- create koca.koca --output-type all
+          cargo build --locked --release --package cli --bin koca
 
-          TAG="v${VERSION}"
-
-          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
-            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
-            echo "release_tag=${TAG}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
-            echo "release_tag=${TAG}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Build packages
-        if: steps.tag_check.outputs.tag_exists == 'false'
-        run: cargo run --locked --bin koca -- create koca.koca --output-type all
-
-      - name: Collect package artifacts
-        if: steps.tag_check.outputs.tag_exists == 'false'
+      - name: Collect release artifacts
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p dist
           shopt -s nullglob
           for pkg in ./*.deb ./*.rpm; do
             mv "$pkg" dist/
           done
+          cp target/release/koca dist/koca-linux-x64
           ls -lh dist
 
       - name: Upload workflow artifacts
-        if: steps.tag_check.outputs.tag_exists == 'false'
         uses: actions/upload-artifact@v4
         with:
-          name: koca-packages
+          name: koca-release-artifacts
           path: dist/*
           if-no-files-found: error
 
       - name: Upload release assets
-        if: steps.tag_check.outputs.tag_exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
-          name: v${{ steps.tag_check.outputs.version }}
-          tag_name: ${{ steps.tag_check.outputs.release_tag }}
+          name: v${{ needs.prepare.outputs.version }}
+          tag_name: ${{ needs.prepare.outputs.release_tag }}
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
           files: dist/*
           fail_on_unmatched_files: true
+
+  publish_docker:
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.tag_exists == 'false'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/koca
+          tags: |
+            type=raw,value=v${{ needs.prepare.outputs.version }}
+            type=raw,value=${{ needs.prepare.outputs.version }}
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  publish_npm:
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.tag_exists == 'false'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish @koca-build/cli
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd npm/cli
+          npm version "${{ needs.prepare.outputs.version }}" --no-git-tag-version --allow-same-version
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish_crates:
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.tag_exists == 'false'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Publish koca crate
+        run: cargo publish --locked --package koca
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Wait for index propagation
+        run: sleep 30
+
+      - name: Publish cli crate
+        run: cargo publish --locked --package cli
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

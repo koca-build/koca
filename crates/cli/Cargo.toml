@@ -3,6 +3,9 @@ name = "cli"
 version.workspace = true
 edition.workspace = true
 description = "The Koca command-line interface (CLI) tool"
+license-file = "../../LICENSE"
+readme = "../../README.md"
+repository.workspace = true
 
 [[bin]]
 name = "koca"
