@@ -36,11 +36,8 @@ function download(downloadUrl) {
       res.pipe(file);
 
       file.on('finish', () => {
-        file.close(() => {
-          fs.chmodSync(outPath, 0o755);
-        });
+        file.close();
       });
-
       file.on('error', (err) => {
         console.error(`Failed to write koca binary: ${err.message}`);
         process.exit(1);
