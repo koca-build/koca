@@ -1,0 +1,23 @@
+{
+  "name": "@koca-build/cli",
+  "version": "0.1.2",
+  "description": "koca CLI",
+  "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/koca-build/koca.git"
+  },
+  "bin": {
+    "koca": "bin/koca.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "files": ["bin", "scripts", "LICENSE", "README.md"],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

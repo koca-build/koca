@@ -3,6 +3,9 @@ name = "koca"
 version.workspace = true
 edition.workspace = true
 description = "The Koca library"
+license-file = "../../LICENSE"
+readme = "../../README.md"
+repository.workspace = true
 
 [dependencies]
 brush = { workspace = true }
