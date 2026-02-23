@@ -178,8 +178,26 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-      - name: Wait for index propagation
-        run: sleep 30
+      - name: Wait for koca on crates.io
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.prepare.outputs.version }}"
+          ATTEMPTS=60
+          SLEEP_SECONDS=5
+
+          for ((i=1; i<=ATTEMPTS; i++)); do
+            if curl -fsSL "https://crates.io/api/v1/crates/koca/${VERSION}" >/dev/null; then
+              echo "koca ${VERSION} is available on crates.io"
+              exit 0
+            fi
+
+            echo "Attempt ${i}/${ATTEMPTS}: koca ${VERSION} not visible yet; waiting ${SLEEP_SECONDS}s..."
+            sleep "${SLEEP_SECONDS}"
+          done
+
+          echo "Timed out waiting for koca ${VERSION} on crates.io" >&2
+          exit 1
 
       - name: Publish cli crate
         run: cargo publish --locked --package cli

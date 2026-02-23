@@ -1,5 +1,6 @@
-FROM rust:latest AS builder
+FROM rust:1.93.1 AS builder
 WORKDIR /app
+RUN apt-get update && apt-get install golang-go libclang-dev -y
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
