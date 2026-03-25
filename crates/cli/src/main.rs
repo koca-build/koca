@@ -1,35 +1,12 @@
 #![allow(clippy::result_large_err)]
 
-use clap::{Parser, ValueEnum};
-use std::path::PathBuf;
-
+mod cli;
 mod create;
 mod error;
+mod internal;
 
-#[derive(Clone, ValueEnum)]
-enum OutputType {
-    /// The ".deb" output type.
-    Deb,
-    /// The ".rpm" output type.
-    Rpm,
-    /// Output both ".deb" and ".rpm" package types.
-    All,
-}
-
-#[derive(Parser)]
-struct CreateArgs {
-    /// The path to the build file.
-    build_file: PathBuf,
-    /// The output file type.
-    #[arg(long, value_enum, default_value_t = OutputType::All)]
-    output_type: OutputType,
-}
-
-#[derive(Parser)]
-enum Cli {
-    /// Create a package from a build script.
-    Create(CreateArgs),
-}
+use clap::Parser;
+use cli::Cli;
 
 #[tokio::main]
 async fn main() {
@@ -37,6 +14,7 @@ async fn main() {
 
     let output = match cli {
         Cli::Create(create_args) => create::run(create_args).await,
+        Cli::Internal(args) => internal::run(args).await,
     };
 
     if let Err(errs) = output {

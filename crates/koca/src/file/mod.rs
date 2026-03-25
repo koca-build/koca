@@ -376,6 +376,8 @@ impl BuildFile {
             self.package_func.clone().into(),
         );
 
+        self.add_vars();
+
         let existing_dir = mem::replace(&mut self.shell.working_dir, dirs::SRC.into());
         fs::create_dir_all(dirs::PKG)?;
 

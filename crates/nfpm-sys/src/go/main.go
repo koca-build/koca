@@ -18,9 +18,11 @@ import (
 	"github.com/goreleaser/nfpm/v2/rpm"
 )
 
-// NfpmFileInfo represents nfpm file info
+// NfpmFileInfo holds ownership and permissions for a package file
 type NfpmFileInfo struct {
-	Mode uint32 `json:"mode"`
+	Owner string `json:"owner"`
+	Group string `json:"group"`
+	Mode  uint32 `json:"mode"`
 }
 
 // NfpmFile represents nfpm package file mappings
@@ -67,11 +69,16 @@ func runBundle(rawOutputFile *C.char, rawFormat *C.char, rawInputJson *C.char) u
 	var pkgFiles files.Contents
 
 	for _, file := range nfpmConfig.Contents {
+		// Owner/Group/Mode come pre-resolved from Rust, where libc is intercepted by
+		// fakeroot. Do not call os.Stat() here — Go uses raw syscalls that bypass
+		// fakeroot, so it would return the real kernel owner instead of the fakeroot one.
 		pkgFiles = append(pkgFiles, &files.Content{
 			Source:      file.Src,
 			Destination: file.Dst,
 			FileInfo: &files.ContentFileInfo{
-				Mode: os.FileMode(file.FileInfo.Mode),
+				Owner: file.FileInfo.Owner,
+				Group: file.FileInfo.Group,
+				Mode:  os.FileMode(file.FileInfo.Mode),
 			},
 		})
 	}

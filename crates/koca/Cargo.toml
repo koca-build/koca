@@ -11,6 +11,7 @@ repository.workspace = true
 brush = { workspace = true }
 brush-parser = { workspace = true }
 itertools = "0.14.0"
+nix = { workspace = true }
 nfpm-sys = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }

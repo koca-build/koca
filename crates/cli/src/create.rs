@@ -1,14 +1,12 @@
-use std::path::Path;
-
-use koca::{BuildFile, BundleFormat};
+use koca::BuildFile;
+use std::process::Command;
 
 use crate::{
+    cli::{CreateArgs, OutputType},
     error::{CliError, CliMultiError, CliMultiResult},
-    CreateArgs, OutputType,
 };
 use zolt::Colorize;
 
-// Run a bundle.
 pub async fn run(create_args: CreateArgs) -> CliMultiResult<()> {
     let mut build_file = match BuildFile::parse_file(&create_args.build_file).await {
         Ok(file) => file,
@@ -25,49 +23,33 @@ pub async fn run(create_args: CreateArgs) -> CliMultiResult<()> {
         return Err(CliError::Koca { err }.into());
     }
 
-    // Run `package`.
-    zolt::infoln!("Running {} stage...", koca::funcs::PACKAGE.bold().blue());
-    if let Err(err) = build_file.run_package().await {
-        return Err(CliError::Koca { err }.into());
-    }
-
-    // Run the bundle stage.
-    let output_targets = match create_args.output_type {
-        OutputType::Deb => vec![(BundleFormat::Deb, "deb")],
-        OutputType::Rpm => vec![(BundleFormat::Rpm, "rpm")],
-        OutputType::All => vec![(BundleFormat::Deb, "deb"), (BundleFormat::Rpm, "rpm")],
+    // Delegate `package` + `bundle` to a fakeroot subprocess.
+    let output_type_str = match create_args.output_type {
+        OutputType::Deb => "deb",
+        OutputType::Rpm => "rpm",
+        OutputType::All => "all",
     };
 
-    for (bundle_format, file_extension) in output_targets {
-        let arch = build_file.arch()[0].clone();
-        let arch_str = match bundle_format {
-            BundleFormat::Deb => arch.get_deb_string(),
-            BundleFormat::Rpm => arch.get_rpm_string(),
-        };
+    let exe = std::env::current_exe().map_err(|err| CliError::Io { err })?;
+    let status = Command::new("fakeroot")
+        .arg(exe)
+        .arg("internal")
+        .arg("package")
+        .arg(&create_args.build_file)
+        .arg("--output-type")
+        .arg(output_type_str)
+        .status()
+        .map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                CliError::FakerootNotFound
+            } else {
+                CliError::Io { err }
+            }
+        })?;
 
-        let file_name = format!(
-            "{}-{}-{}.{}",
-            build_file.pkgname(),
-            build_file.version(),
-            arch_str,
-            file_extension
-        );
-
-        zolt::infoln!(
-            "Creating package into {}{}...",
-            "./".blue().bold(),
-            file_name.blue().bold()
-        );
-
-        if let Err(err) = build_file
-            .bundle(bundle_format, Path::new(&file_name))
-            .await
-        {
-            return Err(CliError::Koca { err }.into());
-        }
+    if !status.success() {
+        return Err(CliError::PackageFailed.into());
     }
-
-    zolt::infoln!("Package(s) created successfully.");
 
     Ok(())
 }
