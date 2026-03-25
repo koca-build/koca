@@ -1,0 +1,11 @@
+[package]
+name = "nfpm-sys"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+
+[build-dependencies]
+bindgen = "0.72.0"

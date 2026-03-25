@@ -1141,7 +1141,7 @@ dependencies = [
  "brush-core",
  "brush-parser",
  "itertools 0.14.0",
- "nfpm-cgo",
+ "nfpm-sys",
  "semver",
  "serde",
  "serde_json",
@@ -1252,10 +1252,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "nfpm-cgo"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7bf7b9cb641fc228f82fff75137785bad1c9d496ba694a2d45cc6ed058b8a21"
+name = "nfpm-sys"
+version = "0.1.6"
 dependencies = [
  "bindgen",
 ]

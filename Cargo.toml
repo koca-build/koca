@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/koca", "crates/cli"]
+members = ["crates/koca", "crates/cli", "crates/nfpm-sys"]
 
 [workspace.package]
 version = "0.1.6"
@@ -15,7 +15,7 @@ clap = { version = "4.5.37", features = ["derive", "env"] }
 directories = "6.0.0"
 flate2 = "1.1.2"
 koca = { path = "crates/koca", version = "0.1.6" }
-nfpm-cgo = "0.1.1"
+nfpm-sys = { path = "crates/nfpm-sys" }
 semver = "1.0.26"
 thiserror = "2.0.12"
 tar = "0.4.44"

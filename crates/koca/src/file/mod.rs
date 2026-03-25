@@ -10,7 +10,7 @@ pub use arch::Arch;
 use brush::{env::EnvironmentScope, CreateOptions, Shell, ShellVariable};
 use brush_parser::{ast::FunctionDefinition, word::WordPiece};
 use itertools::Itertools;
-use nfpm_cgo::NfpmError;
+use nfpm_sys::NfpmError;
 use parser::DeclValue;
 use std::{
     collections::HashMap,
@@ -438,7 +438,7 @@ impl BuildFile {
         }
 
         // Build with `nfpm`.
-        let nfpm_res = nfpm_cgo::run_bundle(
+        let nfpm_res = nfpm_sys::run_bundle(
             &out_file.display().to_string(),
             format.to_nfpm_format(),
             &config_json,
