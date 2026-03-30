@@ -48,6 +48,9 @@ pub struct NfpmConfig {
     pub description: String,
     /// The package's license.
     pub license: String,
+    /// The package's runtime dependencies.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub depends: Vec<String>,
     /// The package's contents.
     pub contents: Vec<NfpmFile>,
 }
@@ -78,7 +81,8 @@ pub fn get_nfpm_files(pkgdir: &Path) -> Vec<NfpmFile> {
         //
         // Use entry.metadata() — WalkDir already called stat() during traversal, so
         // this reuses the cached result instead of issuing a second syscall per file.
-        let metadata = entry.metadata()
+        let metadata = entry
+            .metadata()
             .expect("file metadata should always be readable");
         let uid = metadata.uid();
         let gid = metadata.gid();

@@ -73,6 +73,8 @@ pub struct BuildFile {
     var_arch: Vec<Arch>,
     /// The package's description.
     var_pkgdesc: String,
+    /// The package's runtime dependencies.
+    var_depends: Vec<String>,
     /// The package's `build` function.
     build_func: FunctionDefinition,
     /// The package's `package` function.
@@ -126,21 +128,16 @@ impl BuildFile {
         Self::get_piece_string(var_name, piece)
     }
 
-    /// Parse a [`DeclValue`] into an `arch`.
-    fn parse_arch(value: &DeclValue) -> KocaMultiResult<Vec<Arch>> {
+    fn parse_string_array(var_name: &str, value: &DeclValue) -> KocaMultiResult<Vec<String>> {
         let mut errs = vec![];
-        let mut archs = vec![];
+        let mut result = vec![];
 
-        let string_values: Vec<_> = value
+        for string_value in value
             .as_array()
-            .ok_or(vec![
-                KocaParserError::NotArray(vars::ARCH.to_string()).into()
-            ])?
+            .ok_or(vec![KocaParserError::NotArray(var_name.to_string()).into()])?
             .iter()
             .map(|word| &word.value)
-            .collect();
-
-        for string_value in string_values {
+        {
             let piece = brush_parser::word::parse(string_value, &Default::default())
                 .unwrap()
                 .into_iter()
@@ -148,14 +145,25 @@ impl BuildFile {
                 .expect("Word parser should not return 2+ elements for a string")
                 .piece;
 
-            let arch_str = match Self::get_piece_string(vars::ARCH, piece) {
-                Ok(arch) => arch,
-                Err(err) => {
-                    errs.push(err);
-                    continue;
-                }
-            };
+            match Self::get_piece_string(var_name, piece) {
+                Ok(s) => result.push(s),
+                Err(err) => errs.push(err),
+            }
+        }
 
+        if !errs.is_empty() {
+            return Err(errs);
+        }
+        Ok(result)
+    }
+
+    /// Parse a [`DeclValue`] into an `arch`.
+    fn parse_arch(value: &DeclValue) -> KocaMultiResult<Vec<Arch>> {
+        let mut errs = vec![];
+        let mut archs = vec![];
+
+        let strings = Self::parse_string_array(vars::ARCH, value)?;
+        for arch_str in strings {
             match Arch::from_str(&arch_str) {
                 Ok(arch) => archs.push(arch),
                 Err(_) => errs.push(KocaParserError::InvalidArch(arch_str).into()),
@@ -189,6 +197,7 @@ impl BuildFile {
         let mut opt_epoch: Option<String> = None;
         let mut opt_arch: Option<Vec<Arch>> = None;
         let mut opt_pkgdesc: Option<String> = None;
+        let mut opt_depends: Vec<String> = vec![];
 
         let mut opt_build_func: Option<FunctionDefinition> = None;
         let mut opt_package_func: Option<FunctionDefinition> = None;
@@ -221,6 +230,10 @@ impl BuildFile {
                 vars::PKGDESC => match Self::get_decl_string(vars::PKGDESC, value) {
                     Ok(pkgdesc) => opt_pkgdesc = Some(pkgdesc),
                     Err(err) => errs.push(err),
+                },
+                vars::DEPENDS => match Self::parse_string_array(vars::DEPENDS, value) {
+                    Ok(depends) => opt_depends = depends,
+                    Err(dep_errs) => errs.extend(dep_errs),
                 },
                 _ => continue,
             }
@@ -292,6 +305,7 @@ impl BuildFile {
             var_version: parsed_version.expect("version should be valid by this point"),
             var_arch: opt_arch.expect("arch should be set"),
             var_pkgdesc: opt_pkgdesc.expect("pkgdesc should be set"),
+            var_depends: opt_depends,
             build_func: opt_build_func.expect("build function should be set"),
             package_func: opt_package_func.expect("package function should be set"),
         })
@@ -428,6 +442,7 @@ impl BuildFile {
             description: self.var_pkgdesc.clone(),
             // TODO: We need to check for this somehow - figure out what the build file implementation looks like.
             license: "CONTACT-PUBLISHER".to_string(),
+            depends: self.var_depends.clone(),
             contents: nfpm::get_nfpm_files(Path::new(dirs::PKG)),
         };
         let config_json =
@@ -487,6 +502,7 @@ pub mod vars {
     pub const EPOCH: &str = "epoch";
     pub const ARCH: &str = "arch";
     pub const PKGDESC: &str = "pkgdesc";
+    pub const DEPENDS: &str = "depends";
 }
 
 /// A mapping of `const` function names to their stringified values.

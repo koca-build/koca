@@ -43,6 +43,7 @@ type NfpmConfig struct {
 	Maintainer  string     `json:"maintainer"`
 	Description string     `json:"description"`
 	License     string     `json:"license"`
+	Depends     []string   `json:"depends,omitempty"`
 	Contents    []NfpmFile `json:"contents"`
 }
 
@@ -92,6 +93,7 @@ func runBundle(rawOutputFile *C.char, rawFormat *C.char, rawInputJson *C.char) u
 		Arch:        nfpmConfig.Arch,
 		Maintainer:  nfpmConfig.Maintainer,
 		Overridables: nfpm.Overridables{
+			Depends:  nfpmConfig.Depends,
 			Contents: pkgFiles,
 		},
 	}
