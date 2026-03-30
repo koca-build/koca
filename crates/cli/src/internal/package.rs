@@ -39,7 +39,7 @@ pub async fn run(args: PackageArgs) -> CliMultiResult<()> {
         };
 
         let file_name = format!(
-            "{}-{}-{}.{}",
+            "{}_{}_{}.{}",
             build_file.pkgname(),
             build_file.version(),
             arch_str,

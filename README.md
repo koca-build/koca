@@ -47,8 +47,15 @@ koca create claude-code.koca --output-type all
 
 ### Installation
 
+#### Install Script
+The quickest way to install Koca on Linux. Auto-detects your distro and installs the appropriate package format (`.deb`, `.rpm`, or raw binary):
+
+```bash
+curl -fsSL https://go.koca.dev/install | bash
+```
+
 #### GitHub Releases
-You can download the latest pre-built binaries for your platform from the [GitHub releases](https://github.com/koca-build/koca/releases/) page.
+You can also download the latest pre-built binaries for your platform from the [GitHub releases](https://github.com/koca-build/koca/releases/) page.
 
 #### Via Cargo
 If you have Rust and Cargo installed, you can build and install Koca from source:

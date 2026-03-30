@@ -73,7 +73,7 @@ jobs:
           for pkg in ./*.deb ./*.rpm; do
             mv "$pkg" dist/
           done
-          cp target/release/koca dist/koca-linux-x64
+          cp target/release/koca dist/koca
           ls -lh dist
 
       - name: Upload workflow artifacts
