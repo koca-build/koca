@@ -102,14 +102,14 @@ main() {
       arch_deb="$(deb_arch "$arch")"
       info "method   deb package"
       local deb_file="${tmpdir}/koca.deb"
-      download "${base_url}/koca_${version}_${arch_deb}.deb" "$deb_file"
+      download "${base_url}/koca_${version}-1_${arch_deb}.deb" "$deb_file"
       info "installing via dpkg..."
       sudo dpkg -i "$deb_file"
       ;;
     rpm)
       info "method   rpm package"
       local rpm_file="${tmpdir}/koca.rpm"
-      download "${base_url}/koca_${version}_${arch}.rpm" "$rpm_file"
+      download "${base_url}/koca_${version}-1_${arch}.rpm" "$rpm_file"
       info "installing via rpm..."
       if command -v dnf &>/dev/null; then
         sudo dnf install -y "$rpm_file"
