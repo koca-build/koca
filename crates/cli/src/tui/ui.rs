@@ -1,4 +1,5 @@
 use crossterm::event::{self as ct_event, KeyCode, KeyModifiers};
+use crossterm::{cursor, execute, terminal};
 use koca::dep::DepConstraint;
 use koca_proto::{DownloadEvent, Event, InstallEvent, PlannedAction};
 use std::io::{self, Write};
@@ -8,12 +9,63 @@ use super::render::{self, confirm_info_lines, RenderState};
 use super::viewport::DynViewport;
 use super::{BuildState, CreateUi, DownloadState, InstallSummary, Phase};
 
+// ── Ground-truth termios save/restore ────────────────────────────────────
+//
+// crossterm's `enable_raw_mode()` / `disable_raw_mode()` maintain a global
+// `TERMINAL_MODE_PRIOR_RAW_MODE` static: the first `enable_raw_mode()` call
+// snapshots the termios, and `disable_raw_mode()` restores that snapshot.
+// The snapshot is cleared on restore, so a subsequent `enable_raw_mode()` will
+// re-snapshot whatever the terminal looks like at *that* moment.
+//
+// During koca's lifecycle, the TUI suspends raw mode (for the Y/n confirm
+// prompt and for the sudo password prompt) and lazily re-enters it ~80 ms
+// later on the next tick.  Between the suspend and the re-enter, a privileged
+// backend process (spawned via sudo) is running pacman/apt hooks that share
+// the same controlling terminal.  If any hook or subprocess calls `tcsetattr`
+// and clears OPOST on the shared tty device before our next
+// `enable_raw_mode()` re-snapshot, crossterm bakes that broken state in as
+// the "original" and faithfully restores it on exit — leaving the user's
+// shell without `\n` → `\r\n` translation (indented PS1, invisible typing).
+//
+// Saving the termios ourselves at construction — before crossterm or any
+// subprocess touches the terminal — gives us a ground-truth snapshot that is
+// immune to this race.  We restore it in `cleanup()` as the very last step,
+// after crossterm has done its own restore attempt.
+
+#[cfg(unix)]
+struct SavedTermios(Option<nix::sys::termios::Termios>);
+
+#[cfg(unix)]
+impl SavedTermios {
+    /// Capture the current termios from stdin (fd 0), which is the same fd
+    /// crossterm uses when stdin is a tty.
+    fn capture() -> Self {
+        use nix::sys::termios::tcgetattr;
+        use std::os::fd::BorrowedFd;
+
+        let fd = unsafe { BorrowedFd::borrow_raw(0) };
+        Self(tcgetattr(fd).ok())
+    }
+
+    /// Restore the captured termios.  No-op if the capture failed or if this
+    /// is a non-tty environment.
+    fn restore(&self) {
+        use nix::sys::termios::{tcsetattr, SetArg};
+        use std::os::fd::BorrowedFd;
+
+        if let Some(ref t) = self.0 {
+            let fd = unsafe { BorrowedFd::borrow_raw(0) };
+            let _ = tcsetattr(fd, SetArg::TCSANOW, t);
+        }
+    }
+}
+
 pub struct KocaCreateTui {
     phase: Phase,
     vp: Option<DynViewport>,
-    /// Use `DynViewport::at_cursor` instead of `::new` for the next viewport
-    /// creation (avoids DSR escape flash after external I/O like sudo).
-    skip_dsr: bool,
+    /// Known cursor row from suspend — used to recreate the viewport without
+    /// a DSR query (which flashes escape codes).
+    resume_row: Option<u16>,
     info: Vec<ratatui::text::Line<'static>>,
     dl_state: DownloadState,
     install_summary: Option<InstallSummary>,
@@ -22,6 +74,10 @@ pub struct KocaCreateTui {
     build_summary: Option<String>,
     pkg_summary: Option<String>,
     tick: usize,
+    /// Ground-truth termios captured before crossterm touches the terminal.
+    /// See module-level comment for rationale.
+    #[cfg(unix)]
+    original_termios: SavedTermios,
 }
 
 impl KocaCreateTui {
@@ -29,7 +85,7 @@ impl KocaCreateTui {
         Ok(Self {
             phase: Phase::Resolve,
             vp: None,
-            skip_dsr: false,
+            resume_row: None,
             info: Vec::new(),
             dl_state: DownloadState::new(),
             install_summary: None,
@@ -38,6 +94,8 @@ impl KocaCreateTui {
             build_summary: None,
             pkg_summary: None,
             tick: 0,
+            #[cfg(unix)]
+            original_termios: SavedTermios::capture(),
         })
     }
 
@@ -63,9 +121,8 @@ impl KocaCreateTui {
         let height = render::calc_height(&state);
 
         if self.vp.is_none() {
-            self.vp = Some(if self.skip_dsr {
-                self.skip_dsr = false;
-                DynViewport::at_cursor(height)?
+            self.vp = Some(if let Some(row) = self.resume_row.take() {
+                DynViewport::at_row(height, row)?
             } else {
                 DynViewport::new(height)?
             });
@@ -126,15 +183,13 @@ impl CreateUi for KocaCreateTui {
                     self.dl_state.total_packages = *total_packages;
                 }
                 DownloadEvent::Progress {
-                    package,
                     bytes_done,
                     bytes_total,
+                    active,
                 } => {
-                    self.dl_state
-                        .update_progress(package, *bytes_done, *bytes_total);
-                    if !self.dl_state.active_names.contains(package) {
-                        self.dl_state.active_names.push(package.clone());
-                    }
+                    self.dl_state.done_bytes = *bytes_done;
+                    self.dl_state.total_bytes = self.dl_state.total_bytes.max(*bytes_total);
+                    self.dl_state.active_names = active.clone();
                 }
                 DownloadEvent::ItemDone { package } => {
                     self.dl_state.done_count += 1;
@@ -235,17 +290,19 @@ impl CreateUi for KocaCreateTui {
 
     fn suspend(&mut self) -> io::Result<()> {
         if let Some(vp) = self.vp.as_mut() {
+            // Save the cursor row before suspending — suspend(false) moves
+            // the cursor to top_y + current_vh.
+            self.resume_row = Some(vp.cursor_row_after_suspend());
             vp.suspend(false)?;
         }
         Ok(())
     }
 
     fn resume(&mut self) -> io::Result<()> {
-        // Drop the old viewport -- its position is stale after external I/O
-        // (sudo, user input) may have moved the cursor. The next redraw()
-        // will lazily create a fresh viewport at the current cursor position.
+        // Drop the old viewport — its position is stale after external I/O
+        // (sudo, user input) may have printed lines. The next redraw() will
+        // lazily create a fresh viewport at the saved cursor row.
         self.vp = None;
-        self.skip_dsr = true;
         Ok(())
     }
 
@@ -253,5 +310,12 @@ impl CreateUi for KocaCreateTui {
         if let Some(mut vp) = self.vp.take() {
             vp.cleanup().ok();
         }
+        let _ = terminal::disable_raw_mode();
+        let _ = execute!(io::stdout(), cursor::Show);
+        // Restore the ground-truth termios we captured at construction time.
+        // This is the authoritative restore — see the module-level comment on
+        // SavedTermios for why crossterm's own restore is insufficient.
+        #[cfg(unix)]
+        self.original_termios.restore();
     }
 }

@@ -4,7 +4,6 @@ mod viewport;
 
 use koca::dep::DepConstraint;
 use koca_proto::{ActionKind, DownloadEvent, Event, InstallEvent, PlannedAction, RemoveEvent};
-use std::collections::HashMap;
 use std::io::{self, Write};
 
 pub use ui::KocaCreateTui;
@@ -35,9 +34,6 @@ pub struct DownloadState {
     pub current_install_pkg: Option<String>,
     pub install_current: u32,
     pub install_total: u32,
-    /// Per-package progress tracking for accurate byte totals.
-    pkg_done: HashMap<String, u64>,
-    pkg_total: HashMap<String, u64>,
 }
 
 impl DownloadState {
@@ -52,19 +48,7 @@ impl DownloadState {
             current_install_pkg: None,
             install_current: 0,
             install_total: 0,
-            pkg_done: HashMap::new(),
-            pkg_total: HashMap::new(),
         }
-    }
-
-    /// Update per-package progress and recompute aggregate totals.
-    pub fn update_progress(&mut self, package: &str, bytes_done: u64, bytes_total: u64) {
-        self.pkg_done.insert(package.to_string(), bytes_done);
-        if bytes_total > 0 {
-            self.pkg_total.insert(package.to_string(), bytes_total);
-        }
-        self.done_bytes = self.pkg_done.values().sum();
-        self.total_bytes = self.total_bytes.max(self.pkg_total.values().sum());
     }
 }
 
@@ -223,13 +207,14 @@ impl CreateUi for KocaCreateCli {
                     );
                 }
                 DownloadEvent::Progress {
-                    package,
                     bytes_done,
                     bytes_total,
+                    active,
                 } => {
                     if *bytes_total > 0 {
                         let pct = bytes_done * 100 / bytes_total;
-                        print!("\r  {} {}%  ", package.dimmed(), pct);
+                        let names = active.join(", ");
+                        print!("\r  {} {}%  ", names.dimmed(), pct);
                         io::stdout().flush()?;
                     }
                 }

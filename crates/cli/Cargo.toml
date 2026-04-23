@@ -26,3 +26,6 @@ tar = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 zolt = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true }
