@@ -4,12 +4,22 @@ mod cli;
 mod create;
 mod error;
 mod internal;
+mod tui;
 
 use clap::Parser;
 use cli::Cli;
 
 #[tokio::main]
 async fn main() {
+    // Ctrl+C handler: restore terminal state before exit.
+    // In raw mode SIGINT is suppressed, so we catch it via tokio.
+    tokio::spawn(async {
+        tokio::signal::ctrl_c().await.ok();
+        crossterm::terminal::disable_raw_mode().ok();
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show);
+        std::process::exit(130);
+    });
+
     let cli = Cli::parse();
 
     let output = match cli {

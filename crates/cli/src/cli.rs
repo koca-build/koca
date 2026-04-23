@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
+use koca::BundleFormat;
 use std::path::PathBuf;
 
 #[derive(Clone, ValueEnum)]
@@ -11,6 +12,24 @@ pub enum OutputType {
     All,
 }
 
+impl OutputType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Deb => "deb",
+            Self::Rpm => "rpm",
+            Self::All => "all",
+        }
+    }
+
+    pub fn bundle_formats(&self) -> Vec<BundleFormat> {
+        match self {
+            Self::Deb => vec![BundleFormat::Deb],
+            Self::Rpm => vec![BundleFormat::Rpm],
+            Self::All => vec![BundleFormat::Deb, BundleFormat::Rpm],
+        }
+    }
+}
+
 #[derive(Parser)]
 pub struct CreateArgs {
     /// The path to the build file.
@@ -18,6 +37,15 @@ pub struct CreateArgs {
     /// The output file type.
     #[arg(long, value_enum, default_value_t = OutputType::All)]
     pub output_type: OutputType,
+    /// Override distro detection (e.g. "arch", "debian:12").
+    #[arg(long)]
+    pub target: Option<String>,
+    /// Remove makedepends after a successful build.
+    #[arg(long)]
+    pub rm_deps: bool,
+    /// Skip interactive confirmation prompts.
+    #[arg(long)]
+    pub noconfirm: bool,
 }
 
 #[derive(Parser)]
