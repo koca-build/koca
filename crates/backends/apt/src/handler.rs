@@ -6,7 +6,9 @@ use koca_proto::{
     PackageStatus, PlannedAction, ProtocolError, RemoveEvent as ProtoRemoveEvent, ResultPayload,
 };
 use rust_apt::cache::Cache;
-use rust_apt::progress::{DynAcquireProgress, DynInstallProgress, AcquireProgress, InstallProgress};
+use rust_apt::progress::{
+    AcquireProgress, DynAcquireProgress, DynInstallProgress, InstallProgress,
+};
 use rust_apt::raw::{AcqTextStatus, ItemDesc, PkgAcquire};
 use tokio::sync::mpsc;
 
@@ -119,13 +121,11 @@ pub fn install_plan(packages: &[String]) -> Result<(ResultPayload, Vec<String>),
 
             let action = match (&old_version, &cand) {
                 (None, _) => ActionKind::Install,
-                (Some(old), Some(new)) => {
-                    match rust_apt::util::cmp_versions(old, new.version()) {
-                        Ordering::Less => ActionKind::Upgrade,
-                        Ordering::Greater => ActionKind::Downgrade,
-                        Ordering::Equal => ActionKind::Reinstall,
-                    }
-                }
+                (Some(old), Some(new)) => match rust_apt::util::cmp_versions(old, new.version()) {
+                    Ordering::Less => ActionKind::Upgrade,
+                    Ordering::Greater => ActionKind::Downgrade,
+                    Ordering::Equal => ActionKind::Reinstall,
+                },
                 _ => ActionKind::Install,
             };
 
@@ -209,6 +209,10 @@ pub async fn commit_transaction(
                     message: format!("package not found: {name}"),
                 })?;
 
+                if pkg.is_installed() {
+                    continue;
+                }
+
                 if !pkg.mark_install(true, false) {
                     return Err(ProtocolError {
                         code: ErrorCode::DependencyConflict,
@@ -243,17 +247,22 @@ pub async fn commit_transaction(
             });
         }
 
-        // Build progress callbacks that send to the channel
+        // Build progress callbacks that send to the channel.
+        // For removes, APT still runs the acquire phase but there's nothing
+        // to download — suppress download events so they don't confuse the
+        // TUI state machine.
         let dl_tx = tx_for_thread.clone();
         let mut acquire_progress = AcquireProgress::new(KocaAcquireProgress {
             tx: dl_tx,
+            suppress: is_remove,
         });
 
         let inst_tx = tx_for_thread.clone();
-        let inst_is_remove = is_remove;
         let mut install_progress = InstallProgress::new(KocaInstallProgress {
             tx: inst_tx,
-            is_remove: inst_is_remove,
+            is_remove,
+            sent_start: false,
+            n_pkgs,
         });
 
         cache
@@ -330,13 +339,16 @@ pub async fn commit_transaction(
 // ── Progress adapters ─────────────────────────────────────────────────────
 
 /// Acquire (download) progress adapter that sends proto events over a channel.
+/// When `suppress` is true (remove transactions), all callbacks are no-ops —
+/// APT still runs the acquire phase during removes but there's nothing to
+/// download, and emitting download events would confuse the TUI state machine.
 struct KocaAcquireProgress {
     tx: mpsc::UnboundedSender<ProtoEvent>,
+    suppress: bool,
 }
 
 impl DynAcquireProgress for KocaAcquireProgress {
     fn pulse_interval(&self) -> usize {
-        // 500ms in microseconds (APT default)
         500_000
     }
 
@@ -347,6 +359,9 @@ impl DynAcquireProgress for KocaAcquireProgress {
     fn fail(&mut self, _item: &ItemDesc) {}
 
     fn pulse(&mut self, status: &AcqTextStatus, owner: &PkgAcquire) {
+        if self.suppress {
+            return;
+        }
         let active: Vec<String> = owner
             .workers()
             .iter()
@@ -363,6 +378,9 @@ impl DynAcquireProgress for KocaAcquireProgress {
     }
 
     fn done(&mut self, item: &ItemDesc) {
+        if self.suppress {
+            return;
+        }
         let _ = self.tx.send(ProtoEvent::Download {
             inner: ProtoDownloadEvent::ItemDone {
                 package: item.short_desc(),
@@ -373,6 +391,9 @@ impl DynAcquireProgress for KocaAcquireProgress {
     fn start(&mut self) {}
 
     fn stop(&mut self, _status: &AcqTextStatus) {
+        if self.suppress {
+            return;
+        }
         let _ = self.tx.send(ProtoEvent::Download {
             inner: ProtoDownloadEvent::Done,
         });
@@ -383,6 +404,32 @@ impl DynAcquireProgress for KocaAcquireProgress {
 struct KocaInstallProgress {
     tx: mpsc::UnboundedSender<ProtoEvent>,
     is_remove: bool,
+    sent_start: bool,
+    n_pkgs: u32,
+}
+
+impl KocaInstallProgress {
+    /// Emit the phase-start event once, on the first progress callback.
+    fn ensure_start_sent(&mut self) {
+        if self.sent_start {
+            return;
+        }
+        self.sent_start = true;
+        let evt = if self.is_remove {
+            ProtoEvent::Remove {
+                inner: ProtoRemoveEvent::Start {
+                    total_packages: self.n_pkgs,
+                },
+            }
+        } else {
+            ProtoEvent::Install {
+                inner: ProtoInstallEvent::Start {
+                    total_packages: self.n_pkgs,
+                },
+            }
+        };
+        let _ = self.tx.send(evt);
+    }
 }
 
 impl DynInstallProgress for KocaInstallProgress {
@@ -393,6 +440,8 @@ impl DynInstallProgress for KocaInstallProgress {
         total_steps: u64,
         action: String,
     ) {
+        self.ensure_start_sent();
+
         let percent = if total_steps > 0 {
             Some(((steps_done as f64 / total_steps as f64) * 100.0) as u32)
         } else {
@@ -424,7 +473,7 @@ impl DynInstallProgress for KocaInstallProgress {
     }
 
     fn error(&mut self, pkgname: String, steps_done: u64, total_steps: u64, error: String) {
-        // Report errors as actions with an "error" action string
+        self.ensure_start_sent();
         let evt = if self.is_remove {
             ProtoEvent::Remove {
                 inner: ProtoRemoveEvent::Action {

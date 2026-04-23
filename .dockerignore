@@ -1,7 +1,0 @@
-target/
-.git/
-*.md
-PROMPT.md
-WIP-PLAN.md
-main.sh
-test.koca
