@@ -35,3 +35,9 @@ impl From<CliError> for CliMultiError {
         Self(vec![value])
     }
 }
+
+impl From<std::io::Error> for CliMultiError {
+    fn from(err: std::io::Error) -> Self {
+        CliError::Io { err }.into()
+    }
+}

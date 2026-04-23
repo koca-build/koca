@@ -1,9 +1,9 @@
 use std::path::Path;
 
-use koca::{BuildFile, BundleFormat};
+use koca::{BuildFile, BuildOutputLine, BuildOutputStream};
 
 use crate::{
-    cli::{OutputType, PackageArgs},
+    cli::PackageArgs,
     error::{CliError, CliMultiError, CliMultiResult},
 };
 use zolt::Colorize;
@@ -20,30 +20,24 @@ pub async fn run(args: PackageArgs) -> CliMultiResult<()> {
 
     // Run `package`.
     zolt::infoln!("Running {} stage...", koca::funcs::PACKAGE.bold().blue());
-    if let Err(err) = build_file.run_package().await {
+    if let Err(err) = build_file
+        .run_package_with_output(|line| {
+            if let Some(line) = line {
+                print_build_output(line);
+            }
+        })
+        .await
+    {
         return Err(CliError::Koca { err }.into());
     }
 
     // Run the bundle stage.
-    let output_targets = match args.output_type {
-        OutputType::Deb => vec![(BundleFormat::Deb, "deb")],
-        OutputType::Rpm => vec![(BundleFormat::Rpm, "rpm")],
-        OutputType::All => vec![(BundleFormat::Deb, "deb"), (BundleFormat::Rpm, "rpm")],
-    };
-
-    for (bundle_format, file_extension) in output_targets {
+    for bundle_format in args.output_type.bundle_formats() {
         let arch = build_file.arch()[0].clone();
-        let arch_str = match bundle_format {
-            BundleFormat::Deb => arch.get_deb_string(),
-            BundleFormat::Rpm => arch.get_rpm_string(),
-        };
-
-        let file_name = format!(
-            "{}_{}_{}.{}",
+        let file_name = bundle_format.output_filename(
             build_file.pkgname(),
-            build_file.version(),
-            arch_str,
-            file_extension
+            &build_file.version().to_string(),
+            &arch,
         );
 
         zolt::infoln!(
@@ -63,4 +57,11 @@ pub async fn run(args: PackageArgs) -> CliMultiResult<()> {
     zolt::infoln!("Package(s) created successfully.");
 
     Ok(())
+}
+
+fn print_build_output(line: BuildOutputLine) {
+    match line.stream {
+        BuildOutputStream::Stdout => println!("{}", line.line),
+        BuildOutputStream::Stderr => eprintln!("{}", line.line),
+    }
 }

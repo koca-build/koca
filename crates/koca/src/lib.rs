@@ -3,8 +3,12 @@
 //! The entry point to the library is the [`BuildFile`].
 #![allow(clippy::result_large_err)]
 
+pub mod backend;
+pub mod dep;
+pub mod distro;
 mod error;
 mod file;
 mod nfpm;
+pub mod resolve;
 pub use error::*;
 pub use file::*;

@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/koca", "crates/cli", "crates/nfpm-sys"]
+members = [
+    "crates/koca",
+    "crates/cli",
+    "crates/nfpm-sys",
+    "crates/proto",
+    "crates/backends/alpm",
+]
 
 [workspace.package]
 version = "0.2.0"
@@ -9,8 +15,8 @@ repository = "https://github.com/koca-build/koca"
 
 [workspace.dependencies]
 anyhow = "1.0.98"
-brush = { package = "brush-core", version = "=0.3.2" }
-brush-parser = "=0.2.17"
+brush = { package = "brush-core", version = "=0.4.0" }
+brush-parser = "=0.3.0"
 clap = { version = "4.5.37", features = ["derive", "env"] }
 directories = "6.0.0"
 flate2 = "1.1.2"
@@ -19,7 +25,8 @@ nfpm-sys = { path = "crates/nfpm-sys" }
 semver = "1.0.26"
 thiserror = "2.0.12"
 tar = "0.4.44"
-tokio = "1.45.0"
+tokio = { version = "1.45.0", features = ["full"] }
+repology = "0.1.1"
 zolt = "0.7.2"
 regex = "1.11.1"
 reqwest = { version = "0.12.19", default-features = false, features = [
@@ -29,3 +36,8 @@ serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 nix = { version = "0.29", features = ["user"] }
 walkdir = "2.5.0"
+interprocess = { version = "2", features = ["tokio"] }
+koca-proto = { path = "crates/proto" }
+libversion = "0.3.1"
+ratatui = "0.30"
+crossterm = "0.29"

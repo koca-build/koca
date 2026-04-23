@@ -7,7 +7,7 @@ use crate::{
     KocaError, KocaMultiResult, KocaParserError, KocaResult,
 };
 pub use arch::Arch;
-use brush::{env::EnvironmentScope, CreateOptions, Shell, ShellVariable};
+use brush::{CreateOptions, Shell, ShellVariable};
 use brush_parser::{ast::FunctionDefinition, word::WordPiece};
 use itertools::Itertools;
 use nfpm_sys::NfpmError;
@@ -16,11 +16,11 @@ use std::{
     collections::HashMap,
     env, fmt,
     fs::{self, File},
-    io::Read,
-    mem,
+    io::{BufRead, BufReader, Read},
     path::{self, Path},
     str::FromStr,
 };
+use tokio::sync::mpsc;
 pub use version::{PkgVersion, Version};
 
 /// The output bundle format.
@@ -32,12 +32,31 @@ pub enum BundleFormat {
 }
 
 impl BundleFormat {
-    /// Convert the output type to a `nfpm` bundle format.
-    pub fn to_nfpm_format(&self) -> &str {
+    /// File extension for this bundle format (also the nfpm format string).
+    pub fn extension(&self) -> &'static str {
         match self {
             BundleFormat::Deb => "deb",
             BundleFormat::Rpm => "rpm",
         }
+    }
+
+    /// Return the architecture string appropriate for this format.
+    pub fn arch_string(&self, arch: &Arch) -> &'static str {
+        match self {
+            BundleFormat::Deb => arch.get_deb_string(),
+            BundleFormat::Rpm => arch.get_rpm_string(),
+        }
+    }
+
+    /// Build the output filename for a package in this format.
+    pub fn output_filename(&self, pkgname: &str, version: &str, arch: &Arch) -> String {
+        format!(
+            "{}_{}_{}.{}",
+            pkgname,
+            version,
+            self.arch_string(arch),
+            self.extension()
+        )
     }
 }
 
@@ -59,6 +78,18 @@ impl fmt::Display for KocaFunction {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildOutputStream {
+    Stdout,
+    Stderr,
+}
+
+#[derive(Debug, Clone)]
+pub struct BuildOutputLine {
+    pub stream: BuildOutputStream,
+    pub line: String,
+}
+
 /// A package's Koca build file.
 pub struct BuildFile {
     /// The [`Shell`] instance to use.
@@ -73,8 +104,10 @@ pub struct BuildFile {
     var_arch: Vec<Arch>,
     /// The package's description.
     var_pkgdesc: String,
-    /// The package's runtime dependencies.
-    var_depends: Vec<String>,
+    /// The package's runtime dependencies (repology project names + optional version constraints).
+    var_depends: Vec<crate::dep::DepConstraint>,
+    /// The package's build-time dependencies (repology project names + optional version constraints).
+    var_makedepends: Vec<crate::dep::DepConstraint>,
     /// The package's `build` function.
     build_func: FunctionDefinition,
     /// The package's `package` function.
@@ -157,6 +190,26 @@ impl BuildFile {
         Ok(result)
     }
 
+    /// Parse a string array into `Vec<DepConstraint>`, propagating parse errors.
+    fn parse_dep_array(
+        var_name: &str,
+        value: &DeclValue,
+    ) -> KocaMultiResult<Vec<crate::dep::DepConstraint>> {
+        let strings = Self::parse_string_array(var_name, value)?;
+        let mut errs = vec![];
+        let mut result = vec![];
+        for s in strings {
+            match crate::dep::DepConstraint::parse(&s) {
+                Ok(dep) => result.push(dep),
+                Err(err) => errs.push(err),
+            }
+        }
+        if !errs.is_empty() {
+            return Err(errs);
+        }
+        Ok(result)
+    }
+
     /// Parse a [`DeclValue`] into an `arch`.
     fn parse_arch(value: &DeclValue) -> KocaMultiResult<Vec<Arch>> {
         let mut errs = vec![];
@@ -182,7 +235,7 @@ impl BuildFile {
     pub async fn parse<R: Read>(reader: R) -> KocaMultiResult<Self> {
         // Create the shell.
         let create_options = Self::create_options();
-        let shell = Shell::new(&create_options)
+        let shell = Shell::new(create_options)
             .await
             .expect("shell options should be valid");
         let program = shell
@@ -197,7 +250,8 @@ impl BuildFile {
         let mut opt_epoch: Option<String> = None;
         let mut opt_arch: Option<Vec<Arch>> = None;
         let mut opt_pkgdesc: Option<String> = None;
-        let mut opt_depends: Vec<String> = vec![];
+        let mut opt_depends: Vec<crate::dep::DepConstraint> = vec![];
+        let mut opt_makedepends: Vec<crate::dep::DepConstraint> = vec![];
 
         let mut opt_build_func: Option<FunctionDefinition> = None;
         let mut opt_package_func: Option<FunctionDefinition> = None;
@@ -231,8 +285,12 @@ impl BuildFile {
                     Ok(pkgdesc) => opt_pkgdesc = Some(pkgdesc),
                     Err(err) => errs.push(err),
                 },
-                vars::DEPENDS => match Self::parse_string_array(vars::DEPENDS, value) {
+                vars::DEPENDS => match Self::parse_dep_array(vars::DEPENDS, value) {
                     Ok(depends) => opt_depends = depends,
+                    Err(dep_errs) => errs.extend(dep_errs),
+                },
+                vars::MAKEDEPENDS => match Self::parse_dep_array(vars::MAKEDEPENDS, value) {
+                    Ok(makedepends) => opt_makedepends = makedepends,
                     Err(dep_errs) => errs.extend(dep_errs),
                 },
                 _ => continue,
@@ -241,7 +299,7 @@ impl BuildFile {
 
         // Extract functions.
         for func in decl_items.funcs {
-            match func.fname.as_str() {
+            match func.fname.value.as_str() {
                 funcs::BUILD => opt_build_func = Some(func),
                 funcs::PACKAGE => opt_package_func = Some(func),
                 _ => continue,
@@ -306,6 +364,7 @@ impl BuildFile {
             var_arch: opt_arch.expect("arch should be set"),
             var_pkgdesc: opt_pkgdesc.expect("pkgdesc should be set"),
             var_depends: opt_depends,
+            var_makedepends: opt_makedepends,
             build_func: opt_build_func.expect("build function should be set"),
             package_func: opt_package_func.expect("package function should be set"),
         })
@@ -325,7 +384,7 @@ impl BuildFile {
     fn add_vars(&mut self) {
         // Add inherited vars.
         for (key, var) in env::vars() {
-            let mut shell_var = ShellVariable::new(var.into());
+            let mut shell_var = ShellVariable::new(var);
             shell_var.export();
             self.shell
                 .set_env_global(&key, shell_var)
@@ -335,11 +394,11 @@ impl BuildFile {
         // Add built-in vars.
         for (key, var) in &self.vars {
             let shell_var = match var {
-                DeclValue::String(val) => ShellVariable::new(val.value.clone().into()),
+                DeclValue::String(val) => ShellVariable::new(val.value.clone()),
                 DeclValue::Array(vals) => {
                     let string_values: Vec<String> =
                         vals.iter().map(|word| word.value.clone()).collect();
-                    ShellVariable::new(string_values.into())
+                    ShellVariable::new(string_values)
                 }
             };
 
@@ -355,28 +414,17 @@ impl BuildFile {
     /// - [`KocaError::IO`] if the build directory couldn't be created.
     /// - [`KocaError::Func`] if the `build` function failed to execute.
     pub async fn run_build(&mut self) -> KocaResult<()> {
-        self.shell.funcs.clear();
-        self.shell.funcs.update(
-            self.build_func.fname.clone(),
-            self.build_func.clone().into(),
-        );
+        self.run_build_with_output(|_| {}).await
+    }
 
-        self.add_vars();
-
-        let existing_dir = mem::replace(&mut self.shell.working_dir, dirs::SRC.into());
-        fs::create_dir_all(dirs::SRC)?;
-
-        let exit_code = self
-            .shell
-            .invoke_function(&self.build_func.fname, &[])
-            .await?;
-        if exit_code != 0 {
-            return Err(KocaError::FuncError(KocaFunction::Build));
-        }
-
-        self.shell.working_dir = existing_dir;
-
-        Ok(())
+    /// Run `build()` with a callback. Called with `Some(line)` for output,
+    /// `None` every ~80ms for tick/spinner animation.
+    pub async fn run_build_with_output(
+        &mut self,
+        callback: impl FnMut(Option<BuildOutputLine>),
+    ) -> KocaResult<()> {
+        self.run_function_with_output(KocaFunction::Build, self.build_func.clone(), None, callback)
+            .await
     }
 
     /// Run the `package` function of the package.
@@ -384,48 +432,126 @@ impl BuildFile {
     /// - [`KocaError::IO`] if the package directory couldn't be created.
     /// - [`KocaError::Func`] if the `package` function failed to execute.
     pub async fn run_package(&mut self) -> KocaResult<()> {
-        self.shell.funcs.clear();
-        self.shell.funcs.update(
-            self.package_func.fname.clone(),
-            self.package_func.clone().into(),
-        );
+        self.run_package_with_output(|_| {}).await
+    }
 
-        self.add_vars();
-
-        let existing_dir = mem::replace(&mut self.shell.working_dir, dirs::SRC.into());
-        fs::create_dir_all(dirs::PKG)?;
-
+    pub async fn run_package_with_output(
+        &mut self,
+        callback: impl FnMut(Option<BuildOutputLine>),
+    ) -> KocaResult<()> {
         let absolute_pkgdir = path::absolute(dirs::PKG)
             .expect("directory should exist at this point")
             .to_string_lossy()
             .into_owned();
-        self.shell
-            .env
-            .add(
-                "pkgdir",
-                ShellVariable::new(absolute_pkgdir.into()),
-                EnvironmentScope::Global,
-            )
-            .expect("shell adding shouldn't fail");
 
-        let exit_code = self
-            .shell
-            .invoke_function(&self.package_func.fname, &[])
-            .await?;
-        if exit_code != 0 {
-            return Err(KocaError::FuncError(KocaFunction::Package));
+        self.run_function_with_output(
+            KocaFunction::Package,
+            self.package_func.clone(),
+            Some(("pkgdir", absolute_pkgdir)),
+            callback,
+        )
+        .await
+    }
+
+    async fn run_function_with_output(
+        &mut self,
+        function_kind: KocaFunction,
+        function: FunctionDefinition,
+        extra_env: Option<(&str, String)>,
+        mut callback: impl FnMut(Option<BuildOutputLine>),
+    ) -> KocaResult<()> {
+        self.shell.undefine_func(funcs::BUILD);
+        self.shell.undefine_func(funcs::PACKAGE);
+        self.shell
+            .define_func(function.fname.value.clone(), function.clone());
+
+        self.add_vars();
+        fs::create_dir_all(dirs::SRC)?;
+        if matches!(function_kind, KocaFunction::Package) {
+            fs::create_dir_all(dirs::PKG)?;
         }
-        self.shell.working_dir = existing_dir;
+
+        if let Some((name, value)) = extra_env {
+            self.shell
+                .set_env_global(name, ShellVariable::new(value))
+                .expect("setting environment variable shouldn't fail");
+        }
+
+        let existing_dir = self.shell.working_dir().to_path_buf();
+        self.shell.set_working_dir(dirs::SRC)?;
+
+        let result = self
+            .invoke_function_with_output(function.fname.value.as_str(), &mut callback)
+            .await;
+
+        self.shell.set_working_dir(existing_dir)?;
+
+        let exit_code = result?;
+        if exit_code != 0 {
+            return Err(KocaError::FuncError(function_kind));
+        }
 
         Ok(())
     }
 
+    async fn invoke_function_with_output(
+        &mut self,
+        function_name: &str,
+        callback: &mut impl FnMut(Option<BuildOutputLine>),
+    ) -> KocaResult<u8> {
+        let (stdout_reader, stdout_writer) = std::io::pipe()?;
+        let (stderr_reader, stderr_writer) = std::io::pipe()?;
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let stdout_handle =
+            spawn_output_reader(stdout_reader, BuildOutputStream::Stdout, tx.clone());
+        let stderr_handle = spawn_output_reader(stderr_reader, BuildOutputStream::Stderr, tx);
+
+        let mut params = self.shell.default_exec_params();
+        params.set_fd(1, stdout_writer.into());
+        params.set_fd(2, stderr_writer.into());
+
+        let mut ticker = tokio::time::interval(std::time::Duration::from_millis(80));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        let exit_code = {
+            let invoke_params = params.clone();
+            let mut invoke = std::pin::pin!(self.shell.invoke_function(
+                function_name,
+                std::iter::empty::<&str>(),
+                &invoke_params
+            ));
+
+            loop {
+                tokio::select! {
+                    result = &mut invoke => break result?,
+                    maybe_line = rx.recv() => {
+                        if let Some(line) = maybe_line {
+                            callback(Some(line));
+                        }
+                    }
+                    _ = ticker.tick() => {
+                        callback(None);
+                    }
+                }
+            }
+        };
+
+        drop(params);
+
+        while let Some(line) = rx.recv().await {
+            callback(Some(line));
+        }
+
+        let _ = stdout_handle.join();
+        let _ = stderr_handle.join();
+
+        Ok(exit_code)
+    }
+
     /// Bundle the package into the given file format.
     pub async fn bundle(&self, format: BundleFormat, out_file: &Path) -> KocaResult<()> {
-        let system_arch = match format {
-            BundleFormat::Deb => self.var_arch[0].get_deb_string(),
-            BundleFormat::Rpm => self.var_arch[0].get_rpm_string(),
-        };
+        let system_arch = format.arch_string(&self.var_arch[0]);
 
         let config = NfpmConfig {
             name: self.var_pkgname.clone(),
@@ -442,7 +568,7 @@ impl BuildFile {
             description: self.var_pkgdesc.clone(),
             // TODO: We need to check for this somehow - figure out what the build file implementation looks like.
             license: "CONTACT-PUBLISHER".to_string(),
-            depends: self.var_depends.clone(),
+            depends: self.var_depends.iter().map(|d| d.to_string()).collect(),
             contents: nfpm::get_nfpm_files(Path::new(dirs::PKG)),
         };
         let config_json =
@@ -457,7 +583,7 @@ impl BuildFile {
         // Build with `nfpm`.
         let nfpm_res = nfpm_sys::run_bundle(
             &out_file.display().to_string(),
-            format.to_nfpm_format(),
+            format.extension(),
             &config_json,
         );
 
@@ -492,6 +618,45 @@ impl BuildFile {
     pub fn pkgdesc(&self) -> &str {
         &self.var_pkgdesc
     }
+
+    /// Get the package's runtime dependency constraints.
+    pub fn depends(&self) -> &[crate::dep::DepConstraint] {
+        &self.var_depends
+    }
+
+    /// Get the package's build-time dependency constraints.
+    pub fn makedepends(&self) -> &[crate::dep::DepConstraint] {
+        &self.var_makedepends
+    }
+}
+
+fn spawn_output_reader(
+    reader: std::io::PipeReader,
+    stream: BuildOutputStream,
+    tx: mpsc::UnboundedSender<BuildOutputLine>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(reader);
+        let mut line = String::new();
+
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    while line.ends_with('\n') || line.ends_with('\r') {
+                        line.pop();
+                    }
+
+                    let _ = tx.send(BuildOutputLine {
+                        stream,
+                        line: line.clone(),
+                    });
+                }
+                Err(_) => break,
+            }
+        }
+    })
 }
 
 /// A mapping of `const` variable names to their stringified values.
@@ -503,6 +668,7 @@ pub mod vars {
     pub const ARCH: &str = "arch";
     pub const PKGDESC: &str = "pkgdesc";
     pub const DEPENDS: &str = "depends";
+    pub const MAKEDEPENDS: &str = "makedepends";
 }
 
 /// A mapping of `const` function names to their stringified values.
