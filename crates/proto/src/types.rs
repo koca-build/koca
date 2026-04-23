@@ -152,9 +152,9 @@ pub enum DownloadEvent {
         total_packages: u32,
     },
     Progress {
-        package: String,
         bytes_done: u64,
         bytes_total: u64,
+        active: Vec<String>,
     },
     ItemDone {
         package: String,

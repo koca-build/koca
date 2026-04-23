@@ -110,6 +110,9 @@ fn spawn_process(binary: &str, sudo: bool, socket_name: &str) -> KocaResult<toki
 
     cmd.arg("--socket").arg(socket_name);
 
+    cmd.stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+
     cmd.spawn().map_err(KocaError::IO)
 }
 

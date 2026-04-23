@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use alpm::{
     Alpm, AnyDownloadEvent, AnyEvent, DownloadEvent, DownloadResult, Error as AlpmError, Event,
     PackageReason, Progress, TransFlag,
@@ -8,6 +10,35 @@ use koca_proto::{
     PackageStatus, PlannedAction, ProtocolError, RemoveEvent as ProtoRemoveEvent, ResultPayload,
 };
 use tokio::sync::mpsc;
+
+/// Tracks aggregate download progress across all files.
+struct DlProgress {
+    tx: mpsc::UnboundedSender<ProtoEvent>,
+    files: HashMap<String, (u64, u64)>,
+    active: Vec<String>,
+}
+
+impl DlProgress {
+    fn new(tx: mpsc::UnboundedSender<ProtoEvent>) -> Self {
+        Self {
+            tx,
+            files: HashMap::new(),
+            active: Vec::new(),
+        }
+    }
+
+    fn send_progress(&self) {
+        let bytes_done: u64 = self.files.values().map(|(done, _)| done).sum();
+        let bytes_total: u64 = self.files.values().map(|(_, total)| total).sum();
+        let _ = self.tx.send(ProtoEvent::Download {
+            inner: ProtoDownloadEvent::Progress {
+                bytes_done,
+                bytes_total,
+                active: self.active.clone(),
+            },
+        });
+    }
+}
 
 /// Open an ALPM handle configured from the system's pacman.conf.
 fn open_handle() -> Result<Alpm, String> {
@@ -189,38 +220,36 @@ pub async fn commit_transaction(
         })?;
 
         // ── download callback ──────────────────────────────────────────────
-        let dl_tx = tx_for_thread.clone();
-        handle.set_dl_cb(dl_tx, |filename, dl_event: AnyDownloadEvent, tx| {
-            let evt = match dl_event.event() {
-                DownloadEvent::Init(_) => Some(ProtoEvent::Download {
-                    inner: ProtoDownloadEvent::Progress {
-                        package: strip_pkg_ext(filename),
-                        bytes_done: 0,
-                        bytes_total: 0,
-                    },
-                }),
-                DownloadEvent::Progress(p) => Some(ProtoEvent::Download {
-                    inner: ProtoDownloadEvent::Progress {
-                        package: strip_pkg_ext(filename),
-                        bytes_done: p.downloaded.max(0) as u64,
-                        bytes_total: p.total.max(0) as u64,
-                    },
-                }),
+        let dl_state = DlProgress::new(tx_for_thread.clone());
+        handle.set_dl_cb(dl_state, |filename, dl_event: AnyDownloadEvent, state| {
+            let name = strip_pkg_ext(filename);
+            match dl_event.event() {
+                DownloadEvent::Init(_) => {
+                    state.files.entry(name.clone()).or_insert((0, 0));
+                    if !state.active.contains(&name) {
+                        state.active.push(name);
+                    }
+                    state.send_progress();
+                }
+                DownloadEvent::Progress(p) => {
+                    state
+                        .files
+                        .insert(name, (p.downloaded.max(0) as u64, p.total.max(0) as u64));
+                    state.send_progress();
+                }
                 DownloadEvent::Completed(c) => {
                     if c.result != DownloadResult::Failed {
-                        Some(ProtoEvent::Download {
-                            inner: ProtoDownloadEvent::ItemDone {
-                                package: strip_pkg_ext(filename),
-                            },
-                        })
-                    } else {
-                        None
+                        // Mark file as fully done
+                        if let Some((_, total)) = state.files.get(&name) {
+                            state.files.insert(name.clone(), (*total, *total));
+                        }
+                        state.active.retain(|n| n != &name);
+                        let _ = state.tx.send(ProtoEvent::Download {
+                            inner: ProtoDownloadEvent::ItemDone { package: name },
+                        });
                     }
                 }
-                DownloadEvent::Retry(_) => None,
-            };
-            if let Some(e) = evt {
-                let _ = tx.send(e);
+                DownloadEvent::Retry(_) => {}
             }
         });
 

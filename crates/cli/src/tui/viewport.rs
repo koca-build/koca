@@ -59,9 +59,11 @@ impl DynViewport {
         })
     }
 
-    /// Create a viewport at the current cursor position without using
-    /// `Viewport::Inline` (avoids the DSR query that can flash escape chars).
-    pub fn at_cursor(height: u16) -> io::Result<Self> {
+    /// Create a viewport at a known cursor row — fully DSR-free.
+    ///
+    /// Use this after `suspend()` where we already know the cursor position.
+    /// `cursor::position()` sends `ESC[6n` which can flash as visible text.
+    pub fn at_row(height: u16, cursor_y: u16) -> io::Result<Self> {
         terminal::enable_raw_mode()?;
 
         // Drain stale input.
@@ -70,7 +72,6 @@ impl DynViewport {
         }
 
         let (width, term_h) = terminal::size()?;
-        let (_, cursor_y) = cursor::position()?;
 
         // Scroll the terminal if we're near the bottom.
         let top_y = if cursor_y + height >= term_h {
@@ -104,6 +105,11 @@ impl DynViewport {
         Ok(())
     }
 
+    /// The row the cursor will be at after `suspend(false)`.
+    pub fn cursor_row_after_suspend(&self) -> u16 {
+        self.top_y + self.current_vh
+    }
+
     /// Temporarily leave the viewport for external I/O (sudo, user input).
     /// If `at_cursor` is true the cursor stays where ratatui left it;
     /// otherwise it moves below the viewport.
@@ -118,26 +124,20 @@ impl DynViewport {
         Ok(())
     }
 
-    /// Clear the viewport area, position cursor after the content, and
-    /// restore the terminal to normal mode.
+    /// Position cursor after the content and restore the terminal to normal
+    /// mode, leaving the rendered output visible.
     pub fn cleanup(&mut self) -> io::Result<()> {
-        let mut out = io::stdout();
-        // Best-effort clear — don't let escape sequence failures prevent
-        // disable_raw_mode from running.
-        for row in 0..self.current_vh {
-            let _ = queue!(
-                out,
-                cursor::MoveTo(0, self.top_y + row),
-                terminal::Clear(terminal::ClearType::CurrentLine),
-            );
-        }
-        let _ = execute!(out, cursor::MoveTo(0, self.top_y), cursor::Show);
-        terminal::disable_raw_mode()?;
+        let _ = terminal::disable_raw_mode();
+        let _ = execute!(
+            io::stdout(),
+            cursor::MoveTo(0, self.top_y + self.current_vh),
+            cursor::Show,
+        );
         Ok(())
     }
 
     fn replace_viewport(&mut self, new_height: u16) -> io::Result<()> {
-        // Clear old viewport lines (batched into a single flush)
+        // Clear old viewport lines and anything below (batched into a single flush)
         let mut out = io::stdout();
         queue!(out, cursor::MoveTo(0, self.top_y))?;
         for _ in 0..self.current_vh {
@@ -147,6 +147,8 @@ impl DynViewport {
                 cursor::MoveDown(1),
             )?;
         }
+        // Clear any leftover lines below the old viewport (from earlier taller phases)
+        queue!(out, terminal::Clear(terminal::ClearType::FromCursorDown))?;
         queue!(out, cursor::MoveTo(0, self.top_y))?;
         out.flush()?;
 
