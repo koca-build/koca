@@ -27,6 +27,11 @@ async fn main() {
         Cli::Internal(args) => internal::run(args).await,
     };
 
+    // Safety net: always restore terminal state on exit, even if cleanup was
+    // missed or failed.
+    crossterm::terminal::disable_raw_mode().ok();
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show);
+
     if let Err(errs) = output {
         for err in errs.0 {
             zolt::errln!("{:?}", anyhow::Error::from(err));

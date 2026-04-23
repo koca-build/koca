@@ -65,7 +65,7 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
 
     let mut newly_installed: Vec<String> = Vec::new();
     let total_download_bytes: u64;
-    let mut installed_count: u32 = 0;
+    let installed_count: u32;
 
     if !makedepends.is_empty() || !depends.is_empty() {
         let resolved_makedeps = if makedepends.is_empty() {
@@ -88,6 +88,14 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
         let makedep_natives = native_names(&resolved_makedeps);
 
         if !makedep_natives.is_empty() {
+            // Build a map from native package name → original constraint for
+            // version satisfaction checks.
+            let native_to_constraint: std::collections::HashMap<&str, &koca::dep::DepConstraint> =
+                resolved_makedeps
+                    .iter()
+                    .flat_map(|r| r.native_names.iter().map(|n| (n.as_str(), &r.constraint)))
+                    .collect();
+
             let mut check_backend = Backend::spawn(backend_bin, false).await.map_err(ke)?;
 
             let check_result = check_backend
@@ -104,7 +112,18 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
 
             let missing: Vec<String> = statuses
                 .iter()
-                .filter(|s| s.status == InstalledStatus::Missing)
+                .filter(|s| {
+                    if s.status == InstalledStatus::Missing {
+                        return true;
+                    }
+                    // Installed — check if the version satisfies the constraint.
+                    if let (Some(ver), Some(constraint)) =
+                        (&s.version, native_to_constraint.get(s.name.as_str()))
+                    {
+                        return !constraint.satisfied_by(ver);
+                    }
+                    false
+                })
                 .map(|s| s.name.clone())
                 .collect();
 
@@ -158,10 +177,10 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
 
                 if let ResultPayload::Install { installed, .. } = &result {
                     newly_installed = installed.clone();
-                    installed_count = installed.len() as u32;
                 }
 
                 total_download_bytes = plan_download;
+                installed_count = actions.len() as u32;
                 ui.finish_install(total_download_bytes, installed_count)?;
 
                 sudo_backend.shutdown().await.map_err(ke)?;

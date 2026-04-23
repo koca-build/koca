@@ -1,6 +1,8 @@
+use crossterm::event::{self as ct_event, KeyCode, KeyModifiers};
 use koca::dep::DepConstraint;
 use koca_proto::{DownloadEvent, Event, InstallEvent, PlannedAction};
 use std::io::{self, Write};
+use std::time::Duration;
 
 use super::render::{self, confirm_info_lines, RenderState};
 use super::viewport::DynViewport;
@@ -9,6 +11,9 @@ use super::{BuildState, CreateUi, DownloadState, InstallSummary, Phase};
 pub struct KocaCreateTui {
     phase: Phase,
     vp: Option<DynViewport>,
+    /// Use `DynViewport::at_cursor` instead of `::new` for the next viewport
+    /// creation (avoids DSR escape flash after external I/O like sudo).
+    skip_dsr: bool,
     info: Vec<ratatui::text::Line<'static>>,
     dl_state: DownloadState,
     install_summary: Option<InstallSummary>,
@@ -17,8 +22,6 @@ pub struct KocaCreateTui {
     build_summary: Option<String>,
     pkg_summary: Option<String>,
     tick: usize,
-    /// Actual content height from the last render, used for cleanup positioning.
-    content_height: u16,
 }
 
 impl KocaCreateTui {
@@ -26,6 +29,7 @@ impl KocaCreateTui {
         Ok(Self {
             phase: Phase::Resolve,
             vp: None,
+            skip_dsr: false,
             info: Vec::new(),
             dl_state: DownloadState::new(),
             install_summary: None,
@@ -34,7 +38,6 @@ impl KocaCreateTui {
             build_summary: None,
             pkg_summary: None,
             tick: 0,
-            content_height: 0,
         })
     }
 
@@ -60,14 +63,17 @@ impl KocaCreateTui {
         let height = render::calc_height(&state);
 
         if self.vp.is_none() {
-            self.vp = Some(DynViewport::new(height)?);
+            self.vp = Some(if self.skip_dsr {
+                self.skip_dsr = false;
+                DynViewport::at_cursor(height)?
+            } else {
+                DynViewport::new(height)?
+            });
         }
 
-        let content_height = std::cell::Cell::new(0u16);
         self.vp.as_mut().unwrap().draw(height, |f| {
-            content_height.set(render::render(f, &state));
+            render::render(f, &state);
         })?;
-        self.content_height = content_height.get();
         Ok(())
     }
 }
@@ -122,9 +128,10 @@ impl CreateUi for KocaCreateTui {
                 DownloadEvent::Progress {
                     package,
                     bytes_done,
-                    bytes_total: _,
+                    bytes_total,
                 } => {
-                    self.dl_state.done_bytes = self.dl_state.done_bytes.max(*bytes_done);
+                    self.dl_state
+                        .update_progress(package, *bytes_done, *bytes_total);
                     if !self.dl_state.active_names.contains(package) {
                         self.dl_state.active_names.push(package.clone());
                     }
@@ -164,6 +171,15 @@ impl CreateUi for KocaCreateTui {
     }
 
     fn tick(&mut self) -> io::Result<()> {
+        // In raw mode SIGINT is suppressed, so check for Ctrl+C as a key event.
+        if ct_event::poll(Duration::ZERO)? {
+            if let ct_event::Event::Key(key) = ct_event::read()? {
+                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.cleanup();
+                    std::process::exit(130);
+                }
+            }
+        }
         self.tick += 1;
         self.dl_state.tick += 1;
         self.redraw()
@@ -229,12 +245,13 @@ impl CreateUi for KocaCreateTui {
         // (sudo, user input) may have moved the cursor. The next redraw()
         // will lazily create a fresh viewport at the current cursor position.
         self.vp = None;
+        self.skip_dsr = true;
         Ok(())
     }
 
     fn cleanup(&mut self) {
         if let Some(mut vp) = self.vp.take() {
-            vp.cleanup_at(self.content_height).ok();
+            vp.cleanup().ok();
         }
     }
 }

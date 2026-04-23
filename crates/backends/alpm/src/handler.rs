@@ -15,9 +15,14 @@ fn open_handle() -> Result<Alpm, String> {
     alpm_utils::alpm_with_conf(&conf).map_err(|e| e.to_string())
 }
 
+/// Returns `true` if the ALPM error indicates the database/handle is locked.
+fn is_lock_error(e: &AlpmError) -> bool {
+    matches!(e, AlpmError::HandleLock)
+}
+
 /// Returns `true` if the ALPM error indicates a permission problem.
 fn is_permission_error(e: &AlpmError) -> bool {
-    matches!(e, AlpmError::HandleLock | AlpmError::DbOpen)
+    matches!(e, AlpmError::DbOpen)
         || e.to_string().to_lowercase().contains("permission")
         || e.to_string().to_lowercase().contains("access")
 }
@@ -68,16 +73,16 @@ pub fn install_plan(packages: &[String]) -> Result<(ResultPayload, Vec<String>),
     handle
         .trans_init(TransFlag::NEEDED | TransFlag::NO_LOCK)
         .map_err(|e| {
-            if is_permission_error(&e) {
-                ProtocolError {
-                    code: ErrorCode::NeedsElevation,
-                    message: e.to_string(),
-                }
+            let code = if is_lock_error(&e) {
+                ErrorCode::DatabaseLocked
+            } else if is_permission_error(&e) {
+                ErrorCode::NeedsElevation
             } else {
-                ProtocolError {
-                    code: ErrorCode::Internal,
-                    message: e.to_string(),
-                }
+                ErrorCode::Internal
+            };
+            ProtocolError {
+                code,
+                message: e.to_string(),
             }
         })?;
 
@@ -230,9 +235,10 @@ pub async fn commit_transaction(
                         total_packages: n_pkgs,
                     },
                 }),
-                Event::RetrieveDone | Event::PkgRetrieveDone(_) => Some(ProtoEvent::Download {
+                Event::RetrieveDone => Some(ProtoEvent::Download {
                     inner: ProtoDownloadEvent::Done,
                 }),
+                Event::PkgRetrieveDone(_) => None,
                 Event::TransactionStart => Some(if is_remove {
                     ProtoEvent::Remove {
                         inner: ProtoRemoveEvent::Start {
@@ -255,19 +261,19 @@ pub async fn commit_transaction(
                         inner: ProtoInstallEvent::Done,
                     }
                 }),
-                Event::HookRunStart(h) => Some(if is_remove {
-                    ProtoEvent::Remove {
-                        inner: ProtoRemoveEvent::Done, // hooks run after remove; reuse Done
+                Event::HookRunStart(h) => {
+                    if is_remove {
+                        None
+                    } else {
+                        Some(ProtoEvent::Install {
+                            inner: ProtoInstallEvent::Hook {
+                                name: h.name().to_string(),
+                                current: h.position() as u32,
+                                total: h.total() as u32,
+                            },
+                        })
                     }
-                } else {
-                    ProtoEvent::Install {
-                        inner: ProtoInstallEvent::Hook {
-                            name: h.name().to_string(),
-                            current: h.position() as u32,
-                            total: h.total() as u32,
-                        },
-                    }
-                }),
+                }
                 _ => None,
             };
             if let Some(e) = proto_evt {
@@ -319,16 +325,19 @@ pub async fn commit_transaction(
         );
 
         // ── transaction ────────────────────────────────────────────────────
-        handle
-            .trans_init(TransFlag::NEEDED)
-            .map_err(|e| ProtocolError {
-                code: if is_permission_error(&e) {
-                    ErrorCode::NeedsElevation
-                } else {
-                    ErrorCode::Internal
-                },
+        handle.trans_init(TransFlag::NEEDED).map_err(|e| {
+            let code = if is_lock_error(&e) {
+                ErrorCode::DatabaseLocked
+            } else if is_permission_error(&e) {
+                ErrorCode::NeedsElevation
+            } else {
+                ErrorCode::Internal
+            };
+            ProtocolError {
+                code,
                 message: e.to_string(),
-            })?;
+            }
+        })?;
 
         if is_remove {
             let local = handle.localdb();

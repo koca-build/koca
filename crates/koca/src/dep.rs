@@ -76,7 +76,7 @@ impl DepConstraint {
             if let Some((name, ver)) = s.split_once(op_str) {
                 let name = name.trim();
                 let ver = ver.trim();
-                if name.is_empty() {
+                if name.is_empty() || ver.is_empty() {
                     return Err(KocaError::InvalidDep(s.to_string()));
                 }
                 return Ok(Self {

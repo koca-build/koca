@@ -94,18 +94,10 @@ pub fn confirm_info_lines(
         ]));
 
         for dep in depends {
-            let mut spans = vec![
+            let spans = vec![
                 Span::styled("  = ", Style::default().fg(Color::DarkGray)),
-                Span::raw(dep.name.clone()),
+                Span::raw(dep.to_string()),
             ];
-
-            if let Some(ver) = &dep.version {
-                spans.push(Span::raw(" "));
-                spans.push(Span::styled(
-                    ver.clone(),
-                    Style::default().fg(Color::DarkGray),
-                ));
-            }
 
             lines.push(Line::from(spans));
         }
@@ -312,6 +304,7 @@ pub fn render(frame: &mut Frame, state: &RenderState) -> u16 {
                         height: 1,
                     },
                 );
+                y += 1;
             }
         }
         super::Phase::Failed => {

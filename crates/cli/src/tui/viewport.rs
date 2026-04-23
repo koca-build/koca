@@ -59,6 +59,39 @@ impl DynViewport {
         })
     }
 
+    /// Create a viewport at the current cursor position without using
+    /// `Viewport::Inline` (avoids the DSR query that can flash escape chars).
+    pub fn at_cursor(height: u16) -> io::Result<Self> {
+        terminal::enable_raw_mode()?;
+
+        // Drain stale input.
+        while event::poll(Duration::from_millis(0))? {
+            let _ = event::read()?;
+        }
+
+        let (width, term_h) = terminal::size()?;
+        let (_, cursor_y) = cursor::position()?;
+
+        // Scroll the terminal if we're near the bottom.
+        let top_y = if cursor_y + height >= term_h {
+            let scroll = cursor_y + height - term_h + 1;
+            let mut out = io::stdout();
+            execute!(out, terminal::ScrollUp(scroll))?;
+            cursor_y.saturating_sub(scroll)
+        } else {
+            cursor_y
+        };
+
+        let terminal = make_fixed_terminal(top_y, width, height)?;
+
+        Ok(Self {
+            terminal,
+            current_vh: height,
+            top_y,
+            width,
+        })
+    }
+
     /// Draw a frame.  Resizes the viewport first if needed.
     pub fn draw<F>(&mut self, needed: u16, draw_fn: F) -> io::Result<()>
     where
@@ -85,18 +118,21 @@ impl DynViewport {
         Ok(())
     }
 
-    /// Position cursor after `content_height` lines of actual content and
-    /// restore terminal.  Avoids blank lines below the last rendered line.
-    pub fn cleanup_at(&mut self, content_height: u16) -> io::Result<()> {
+    /// Clear the viewport area, position cursor after the content, and
+    /// restore the terminal to normal mode.
+    pub fn cleanup(&mut self) -> io::Result<()> {
         let mut out = io::stdout();
-        execute!(
-            out,
-            cursor::MoveTo(0, self.top_y + content_height),
-            cursor::Show
-        )?;
+        // Best-effort clear — don't let escape sequence failures prevent
+        // disable_raw_mode from running.
+        for row in 0..self.current_vh {
+            let _ = queue!(
+                out,
+                cursor::MoveTo(0, self.top_y + row),
+                terminal::Clear(terminal::ClearType::CurrentLine),
+            );
+        }
+        let _ = execute!(out, cursor::MoveTo(0, self.top_y), cursor::Show);
         terminal::disable_raw_mode()?;
-        // Print a newline so the shell prompt starts below the content.
-        writeln!(out)?;
         Ok(())
     }
 
