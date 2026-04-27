@@ -36,5 +36,6 @@ async fn main() {
         for err in errs.0 {
             zolt::errln!("{:?}", anyhow::Error::from(err));
         }
+        std::process::exit(1);
     }
 }

@@ -1,6 +1,7 @@
 # Maintainer: Koca <contact@koca.dev>
-pkgname=koca
-pkgver=0.3.0
+pkgbase=koca
+pkgname=(koca koca-backend-alpm koca-backend-apt)
+pkgver=0.4.0
 pkgrel=1
 pkgdesc='A modern, universal, and system-native package manager'
 arch=('x86_64')
@@ -8,17 +9,30 @@ arch=('x86_64')
 build() {
     git_dir="$(git rev-parse --show-toplevel)"
 
-    if [[ -d "${pkgname}/" ]]; then
-        git -C "${pkgname}" pull
+    if [[ -d "${pkgbase}/" ]]; then
+        git -C "${pkgbase}" pull
     else
-        git clone "${git_dir}" "${pkgname}/"
+        git clone "${git_dir}" "${pkgbase}/"
     fi
 
-    cd "${pkgname}/"
-    cargo build --release --bin "${pkgname}"
+    cd "${pkgbase}/"
+    cargo build --release --bin koca --bin koca-backend-alpm --bin koca-backend-apt
 }
 
-package() {
-    cd "${pkgname}/"
-    install -Dm 755 "target/release/${pkgname}" "${pkgdir}/usr/bin/${pkgname}"
+package:koca() {
+    pkgdesc='A modern, universal, and system-native package manager'
+    cd "${pkgbase}/"
+    install -Dm 755 "target/release/koca" "${pkgdir}/usr/bin/koca"
+}
+
+package:koca-backend-alpm() {
+    pkgdesc='Arch Linux backend for Koca'
+    cd "${pkgbase}/"
+    install -Dm 755 "target/release/koca-backend-alpm" "${pkgdir}/usr/bin/koca-backend-alpm"
+}
+
+package:koca-backend-apt() {
+    pkgdesc='APT backend for Koca'
+    cd "${pkgbase}/"
+    install -Dm 755 "target/release/koca-backend-apt" "${pkgdir}/usr/bin/koca-backend-apt"
 }

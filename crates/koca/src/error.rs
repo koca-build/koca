@@ -46,6 +46,9 @@ pub enum KocaParserError {
     /// A required function was not defined.
     #[error("the function '{0}' was not defined")]
     MissingRequiredFunction(String),
+    /// A conflict between single and split package declarations.
+    #[error("{0}")]
+    SplitPackageConflict(String),
 }
 
 /// Errors that can occur in the Koca library.

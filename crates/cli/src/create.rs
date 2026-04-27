@@ -208,9 +208,9 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
         return Err(CliError::Koca { err }.into());
     }
 
-    let pkgname = build_file.pkgname().to_string();
+    let pkgbase = build_file.pkgbase().to_string();
     let version = build_file.version().to_string();
-    ui.finish_build(&pkgname, &version)?;
+    ui.finish_build(&pkgbase, &version)?;
 
     let output_type_str = args.output_type.as_str();
 
@@ -274,12 +274,12 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
     }
 
     let arch = build_file.arch()[0].clone();
-    let output_files: Vec<String> = args
-        .output_type
-        .bundle_formats()
-        .iter()
-        .map(|fmt| format!("./{}", fmt.output_filename(&pkgname, &version, &arch)))
-        .collect();
+    let mut output_files = Vec::new();
+    for name in build_file.pkgnames() {
+        for fmt in args.output_type.bundle_formats() {
+            output_files.push(format!("./{}", fmt.output_filename(name, &version, &arch)));
+        }
+    }
 
     ui.finish_package(&output_files.join(", "))?;
 

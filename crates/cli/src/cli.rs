@@ -55,6 +55,9 @@ pub struct PackageArgs {
     /// The output file type.
     #[arg(long, value_enum, default_value_t = OutputType::All)]
     pub output_type: OutputType,
+    /// Only package these sub-packages (omit to package all).
+    #[arg(long)]
+    pub package: Vec<String>,
 }
 
 #[derive(Parser)]

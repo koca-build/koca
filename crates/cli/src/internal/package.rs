@@ -18,39 +18,54 @@ pub async fn run(args: PackageArgs) -> CliMultiResult<()> {
         }
     };
 
-    // Run `package`.
-    zolt::infoln!("Running {} stage...", koca::funcs::PACKAGE.bold().blue());
-    if let Err(err) = build_file
-        .run_package_with_output(|line| {
-            if let Some(line) = line {
-                print_build_output(line);
-            }
-        })
-        .await
-    {
-        return Err(CliError::Koca { err }.into());
-    }
+    // Determine which packages to process.
+    let pkg_names: Vec<String> = if args.package.is_empty() {
+        build_file.pkgnames().to_vec()
+    } else {
+        args.package.clone()
+    };
 
-    // Run the bundle stage.
-    for bundle_format in args.output_type.bundle_formats() {
-        let arch = build_file.arch()[0].clone();
-        let file_name = bundle_format.output_filename(
-            build_file.pkgname(),
-            &build_file.version().to_string(),
-            &arch,
-        );
-
-        zolt::infoln!(
-            "Creating package into {}{}...",
-            "./".blue().bold(),
-            file_name.blue().bold()
-        );
+    for pkg_name in &pkg_names {
+        // Run the package function.
+        let func_label = if build_file.pkgnames().len() > 1 {
+            format!("{}:{}", koca::funcs::PACKAGE, pkg_name)
+        } else {
+            koca::funcs::PACKAGE.to_string()
+        };
+        zolt::infoln!("Running {} stage...", func_label.bold().blue());
 
         if let Err(err) = build_file
-            .bundle(bundle_format, Path::new(&file_name))
+            .run_package_for_with_output(pkg_name, |line| {
+                if let Some(line) = line {
+                    print_build_output(line);
+                }
+            })
             .await
         {
             return Err(CliError::Koca { err }.into());
+        }
+
+        // Bundle into each output format.
+        for bundle_format in args.output_type.bundle_formats() {
+            let arch = build_file.arch()[0].clone();
+            let file_name = bundle_format.output_filename(
+                pkg_name,
+                &build_file.version().to_string(),
+                &arch,
+            );
+
+            zolt::infoln!(
+                "Creating package into {}{}...",
+                "./".blue().bold(),
+                file_name.blue().bold()
+            );
+
+            if let Err(err) = build_file
+                .bundle(pkg_name, bundle_format, Path::new(&file_name))
+                .await
+            {
+                return Err(CliError::Koca { err }.into());
+            }
         }
     }
 
