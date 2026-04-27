@@ -1,9 +1,8 @@
 use koca::{
-    backend::Backend,
+    backend::{Backend, Command, InstalledStatus, ResultPayload},
     distro::Distro,
     BuildFile,
 };
-use koca_proto::{Command, InstalledStatus, ResultPayload};
 use std::str::FromStr;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -55,7 +54,7 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
         Distro::detect().map_err(ke)?
     };
 
-    let backend_bin = distro.backend_binary();
+    let backend_kind = distro.backend_kind();
 
     let mut newly_installed: Vec<String> = Vec::new();
     let total_download_bytes: u64;
@@ -78,7 +77,7 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
             let mut resolve_ticker = tokio::time::interval(std::time::Duration::from_millis(80));
             resolve_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-            let mut check_backend = Backend::spawn(backend_bin, false).await.map_err(ke)?;
+            let mut check_backend = Backend::spawn(backend_kind, false).await.map_err(ke)?;
 
             let check_result = {
                 let fut = check_backend.call(Command::CheckInstalled {
@@ -148,7 +147,7 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
                 }
 
                 ui.suspend()?;
-                let mut sudo_backend = Backend::spawn(backend_bin, true).await.map_err(ke)?;
+                let mut sudo_backend = Backend::spawn(backend_kind, true).await.map_err(ke)?;
                 ui.resume()?;
 
                 let result = sudo_backend
@@ -268,7 +267,7 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
 
     if args.rm_deps && !newly_installed.is_empty() {
         zolt::infoln!("Removing {} makedepend(s)...", newly_installed.len());
-        let mut rm_backend = Backend::spawn(backend_bin, true).await.map_err(ke)?;
+        let mut rm_backend = Backend::spawn(backend_kind, true).await.map_err(ke)?;
 
         rm_backend
             .call_streaming(

@@ -17,7 +17,6 @@ clap = { workspace = true }
 directories = { workspace = true }
 flate2 = { workspace = true }
 koca = { workspace = true }
-koca-proto = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
 crossterm = { workspace = true }

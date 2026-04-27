@@ -1,7 +1,7 @@
 mod ui;
 
 use koca::dep::DepConstraint;
-use koca_proto::{Event, PlannedAction};
+use koca::backend::{Event, PlannedAction};
 use std::io;
 
 pub use ui::KocaCreateUi;

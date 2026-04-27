@@ -66,9 +66,17 @@ pub struct InternalArgs {
     pub command: InternalCommand,
 }
 
+#[derive(Parser)]
+pub struct BackendSocketArgs {
+    #[arg(long)]
+    pub socket: String,
+}
+
 #[derive(Subcommand)]
 pub enum InternalCommand {
     Package(PackageArgs),
+    BackendApt(BackendSocketArgs),
+    BackendAlpm(BackendSocketArgs),
 }
 
 #[derive(Parser)]

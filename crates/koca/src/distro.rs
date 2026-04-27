@@ -1,6 +1,6 @@
 use std::{fs, str::FromStr};
 
-use crate::{KocaError, KocaResult};
+use crate::{backend::BackendKind, KocaError, KocaResult};
 
 /// The detected (or user-specified) target distribution.
 #[derive(Debug, Clone)]
@@ -61,12 +61,12 @@ impl Distro {
         }
     }
 
-    /// Returns the backend binary name to use for this distro.
-    pub fn backend_binary(&self) -> &str {
+    /// Returns the backend kind to use for this distro.
+    pub fn backend_kind(&self) -> BackendKind {
         match self.id.as_str() {
-            "arch" | "manjaro" | "endeavouros" | "garuda" => "koca-backend-pacman",
-            "debian" | "ubuntu" | "linuxmint" | "pop" => "koca-backend-apt",
-            _ => "koca-backend-pacman",
+            "arch" | "manjaro" | "endeavouros" | "garuda" => BackendKind::Alpm,
+            "debian" | "ubuntu" | "linuxmint" | "pop" => BackendKind::Apt,
+            _ => BackendKind::Alpm,
         }
     }
 }
@@ -108,14 +108,14 @@ mod tests {
         let d = Distro::parse_os_release("ID=arch\n").unwrap();
         assert_eq!(d.id, "arch");
         assert_eq!(d.repology_repo(), "arch");
-        assert_eq!(d.backend_binary(), "koca-backend-pacman");
+        assert!(matches!(d.backend_kind(), BackendKind::Alpm));
     }
 
     #[test]
     fn parse_debian_quoted() {
         let d = Distro::parse_os_release("ID=debian\nVERSION_ID=\"12\"\n").unwrap();
         assert_eq!(d.repology_repo(), "debian_12");
-        assert_eq!(d.backend_binary(), "koca-backend-apt");
+        assert!(matches!(d.backend_kind(), BackendKind::Apt));
     }
 
     #[test]

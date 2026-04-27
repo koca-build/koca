@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::types::ProtocolError;
+use super::types::ProtocolError;
 
 #[derive(Debug, Error)]
 pub enum ProtoError {

@@ -3,14 +3,17 @@ use std::io::{BufRead, BufReader};
 use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::process::Stdio;
 
-use koca_proto::{
-    ActionKind, BackendSession, ErrorCode, Event as ProtoEvent,
-    InstallEvent as ProtoInstallEvent, InstalledStatus, Message, MessageBody, PackageStatus,
-    PlannedAction, ProtocolError, RemoveEvent as ProtoRemoveEvent, ResultPayload,
+mod download;
+
+use super::transport::BackendSession;
+use super::types::{
+    ActionKind, ErrorCode, Event as ProtoEvent, InstallEvent as ProtoInstallEvent,
+    InstalledStatus, Message, MessageBody, PackageStatus, PlannedAction, ProtocolError,
+    RemoveEvent as ProtoRemoveEvent, ResultPayload,
 };
 use tokio::sync::mpsc;
 
-use crate::download::{download_packages, get_download_items};
+use download::{download_packages, get_download_items};
 
 fn run_cmd(program: &str, args: &[&str]) -> Result<std::process::Output, ProtocolError> {
     std::process::Command::new(program)

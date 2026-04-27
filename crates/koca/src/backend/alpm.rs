@@ -4,10 +4,11 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Instant;
 
-use koca_proto::{
-    ActionKind, BackendSession, DownloadEvent as ProtoDownloadEvent, ErrorCode,
-    Event as ProtoEvent, InstallEvent as ProtoInstallEvent, InstalledStatus, Message, MessageBody,
-    PackageStatus, PlannedAction, ProtocolError, RemoveEvent as ProtoRemoveEvent, ResultPayload,
+use super::transport::BackendSession;
+use super::types::{
+    ActionKind, DownloadEvent as ProtoDownloadEvent, ErrorCode, Event as ProtoEvent,
+    InstallEvent as ProtoInstallEvent, InstalledStatus, Message, MessageBody, PackageStatus,
+    PlannedAction, ProtocolError, RemoveEvent as ProtoRemoveEvent, ResultPayload,
 };
 use tokio::sync::mpsc;
 

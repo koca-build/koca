@@ -59,4 +59,12 @@ impl Arch {
             Arch::Any | Arch::X86_64 => "x86_64",
         }
     }
+
+    /// Convert to the rfpm [`Arch`](rfpm::Arch) type.
+    pub fn to_rfpm(&self) -> rfpm::Arch {
+        match self {
+            Arch::All => rfpm::Arch::All,
+            Arch::Any | Arch::X86_64 => rfpm::Arch::Amd64,
+        }
+    }
 }

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use koca_proto::{DownloadEvent as ProtoDownloadEvent, ErrorCode, Event as ProtoEvent, ProtocolError};
+use crate::backend::types::{DownloadEvent as ProtoDownloadEvent, ErrorCode, Event as ProtoEvent, ProtocolError};
 use md5::Md5;
 use sha1::Sha1;
 use sha2::{Digest, Sha256};

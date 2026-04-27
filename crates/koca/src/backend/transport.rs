@@ -8,7 +8,7 @@ use tokio::{
     sync::mpsc,
 };
 
-use crate::{
+use super::{
     error::ProtoError,
     types::{Command, Message, MessageBody, Request, ResultPayload},
 };

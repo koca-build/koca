@@ -2,7 +2,7 @@ use std::io::{self, Write};
 
 use crossterm::{cursor, execute, terminal};
 use koca::dep::DepConstraint;
-use koca_proto::{ActionKind, DownloadEvent, Event, InstallEvent, PlannedAction, RemoveEvent};
+use koca::backend::{ActionKind, DownloadEvent, Event, InstallEvent, PlannedAction, RemoveEvent};
 use zolt::Colorize;
 
 use super::{CreateUi, BUILD_GUTTER_MAX, SPINNERS};
