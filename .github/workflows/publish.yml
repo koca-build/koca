@@ -42,7 +42,17 @@ jobs:
     if: needs.prepare.outputs.tag_exists == 'false'
     permissions:
       contents: write
+    container:
+      image: archlinux:latest
     steps:
+      - name: Install system dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git rustup fakeroot go apt rpm-tools clang
+
+      - name: Setup Rust
+        run: rustup default stable
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -55,13 +65,13 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: archlinux-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build release artifacts
         shell: bash
         run: |
           set -euo pipefail
-          cargo run --locked --bin koca -- create koca.koca --output-type all
+          cargo run --locked --bin koca -- create koca.koca --output-type all --noconfirm
           cargo build --locked --release --package cli --bin koca
 
       - name: Collect release artifacts

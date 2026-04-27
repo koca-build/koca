@@ -90,14 +90,40 @@ pub struct BuildOutputLine {
     pub line: String,
 }
 
+/// Whether the build file describes a single package or a split (multi-package) build.
+pub enum PackageKind {
+    /// A single package with just `pkgname`.
+    Single(String),
+    /// A split build with `pkgbase` and an array of `pkgname`s.
+    Split { base: String, names: Vec<String> },
+}
+
+impl PackageKind {
+    /// Return all package names.
+    pub fn names(&self) -> &[String] {
+        match self {
+            PackageKind::Single(name) => std::slice::from_ref(name),
+            PackageKind::Split { names, .. } => names,
+        }
+    }
+
+    /// Return the pkgbase. For single packages this is the pkgname.
+    pub fn base(&self) -> &str {
+        match self {
+            PackageKind::Single(name) => name,
+            PackageKind::Split { base, .. } => base,
+        }
+    }
+}
+
 /// A package's Koca build file.
 pub struct BuildFile {
     /// The [`Shell`] instance to use.
     shell: Shell,
     /// The raw list of defined variables.
     vars: HashMap<String, DeclValue>,
-    /// The package's name.
-    var_pkgname: String,
+    /// Single vs. split package metadata.
+    packages: PackageKind,
     /// The package's version.
     var_version: Version,
     /// The package's architecture.
@@ -110,8 +136,9 @@ pub struct BuildFile {
     var_makedepends: Vec<crate::dep::DepConstraint>,
     /// The package's `build` function.
     build_func: FunctionDefinition,
-    /// The package's `package` function.
-    package_func: FunctionDefinition,
+    /// Package functions keyed by package name.
+    /// Single: one entry. Split: one per pkgname element.
+    package_funcs: Vec<(String, FunctionDefinition)>,
 }
 
 impl BuildFile {
@@ -244,7 +271,9 @@ impl BuildFile {
         let decl_items = parser::get_decls(&program).map_err(|err| vec![err])?;
 
         // Define variables and function we need to extract.
-        let mut opt_pkgname: Option<String> = None;
+        let mut opt_pkgbase: Option<String> = None;
+        let mut opt_pkgname_single: Option<String> = None;
+        let mut opt_pkgname_array: Option<Vec<String>> = None;
         let mut opt_pkgver: Option<String> = None;
         let mut opt_pkgrel: Option<String> = None;
         let mut opt_epoch: Option<String> = None;
@@ -254,16 +283,27 @@ impl BuildFile {
         let mut opt_makedepends: Vec<crate::dep::DepConstraint> = vec![];
 
         let mut opt_build_func: Option<FunctionDefinition> = None;
-        let mut opt_package_func: Option<FunctionDefinition> = None;
+        let mut single_package_func: Option<FunctionDefinition> = None;
+        let mut split_package_funcs: HashMap<String, FunctionDefinition> = HashMap::new();
 
         let mut errs = vec![];
 
         // Extract variables.
         for (key, value) in &decl_items.vars {
             match key.as_str() {
-                vars::PKGNAME => match Self::get_decl_string(vars::PKGNAME, value) {
-                    Ok(pkgname) => opt_pkgname = Some(pkgname),
+                vars::PKGBASE => match Self::get_decl_string(vars::PKGBASE, value) {
+                    Ok(pkgbase) => opt_pkgbase = Some(pkgbase),
                     Err(err) => errs.push(err),
+                },
+                vars::PKGNAME => match value {
+                    DeclValue::Array(_) => match Self::parse_string_array(vars::PKGNAME, value) {
+                        Ok(names) => opt_pkgname_array = Some(names),
+                        Err(arr_errs) => errs.extend(arr_errs),
+                    },
+                    DeclValue::String(_) => match Self::get_decl_string(vars::PKGNAME, value) {
+                        Ok(name) => opt_pkgname_single = Some(name),
+                        Err(err) => errs.push(err),
+                    },
                 },
                 vars::PKGVER => match Self::get_decl_string(vars::PKGVER, value) {
                     Ok(pkgver) => opt_pkgver = Some(pkgver),
@@ -299,16 +339,20 @@ impl BuildFile {
 
         // Extract functions.
         for func in decl_items.funcs {
-            match func.fname.value.as_str() {
-                funcs::BUILD => opt_build_func = Some(func),
-                funcs::PACKAGE => opt_package_func = Some(func),
-                _ => continue,
+            let fname = func.fname.value.as_str();
+            if fname == funcs::BUILD {
+                opt_build_func = Some(func);
+            } else if fname == funcs::PACKAGE {
+                single_package_func = Some(func);
+            } else if let Some(pkg_name) = fname.strip_prefix(funcs::PACKAGE_PREFIX) {
+                split_package_funcs.insert(pkg_name.to_string(), func);
             }
         }
 
         // Check that required variables are set.
+        let has_pkgname = opt_pkgname_single.is_some() || opt_pkgname_array.is_some();
         let required_vars = [
-            (vars::PKGNAME, opt_pkgname.is_some()),
+            (vars::PKGNAME, has_pkgname),
             (vars::PKGVER, opt_pkgver.is_some()),
             (vars::ARCH, opt_arch.is_some()),
             (vars::PKGDESC, opt_pkgdesc.is_some()),
@@ -320,16 +364,79 @@ impl BuildFile {
             }
         }
 
-        // Check that required functions are set.
-        let required_funcs = [
-            (funcs::BUILD, opt_build_func.is_some()),
-            (funcs::PACKAGE, opt_package_func.is_some()),
-        ];
+        // Build PackageKind and validate package functions.
+        let opt_packages: Option<PackageKind>;
+        let mut package_funcs: Vec<(String, FunctionDefinition)> = vec![];
 
-        for (func_name, is_set) in required_funcs {
-            if !is_set {
-                errs.push(KocaParserError::MissingRequiredFunction(func_name.to_string()).into());
+        if let Some(names) = opt_pkgname_array {
+            // Split mode: require pkgbase, require package:NAME() for each, forbid package().
+            if opt_pkgbase.is_none() {
+                errs.push(
+                    KocaParserError::MissingRequiredVariable(vars::PKGBASE.to_string()).into(),
+                );
             }
+            if single_package_func.is_some() {
+                errs.push(
+                    KocaParserError::SplitPackageConflict(
+                        "package() cannot be used with split packages; use package:NAME() instead"
+                            .to_string(),
+                    )
+                    .into(),
+                );
+            }
+            for name in &names {
+                match split_package_funcs.remove(name) {
+                    Some(func) => package_funcs.push((name.clone(), func)),
+                    None => errs.push(
+                        KocaParserError::MissingRequiredFunction(format!("package:{name}")).into(),
+                    ),
+                }
+            }
+            // Warn about extra package:NAME() functions not in pkgname array.
+            for extra_name in split_package_funcs.keys() {
+                errs.push(
+                    KocaParserError::SplitPackageConflict(format!(
+                        "package:{extra_name}() defined but '{extra_name}' is not in pkgname"
+                    ))
+                    .into(),
+                );
+            }
+            opt_packages = opt_pkgbase.map(|base| PackageKind::Split { base, names });
+        } else if let Some(name) = opt_pkgname_single {
+            // Single mode: require package(), forbid pkgbase, forbid package:NAME().
+            if opt_pkgbase.is_some() {
+                errs.push(
+                    KocaParserError::SplitPackageConflict(
+                        "pkgbase cannot be used with a single-string pkgname".to_string(),
+                    )
+                    .into(),
+                );
+            }
+            if !split_package_funcs.is_empty() {
+                errs.push(
+                    KocaParserError::SplitPackageConflict(
+                        "package:NAME() functions cannot be used with a single-string pkgname"
+                            .to_string(),
+                    )
+                    .into(),
+                );
+            }
+            match single_package_func {
+                Some(func) => package_funcs.push((name.clone(), func)),
+                None => errs.push(
+                    KocaParserError::MissingRequiredFunction(funcs::PACKAGE.to_string()).into(),
+                ),
+            }
+            opt_packages = Some(PackageKind::Single(name));
+        } else {
+            opt_packages = None;
+        }
+
+        // Check that build() is defined.
+        if opt_build_func.is_none() {
+            errs.push(
+                KocaParserError::MissingRequiredFunction(funcs::BUILD.to_string()).into(),
+            );
         }
 
         // TODO: We need to handle this better so the user knows if the epoch/pkgrel itself is invalid.
@@ -359,14 +466,14 @@ impl BuildFile {
         Ok(Self {
             shell,
             vars: decl_items.vars,
-            var_pkgname: opt_pkgname.expect("pkgname should be set"),
+            packages: opt_packages.expect("packages should be set"),
             var_version: parsed_version.expect("version should be valid by this point"),
             var_arch: opt_arch.expect("arch should be set"),
             var_pkgdesc: opt_pkgdesc.expect("pkgdesc should be set"),
             var_depends: opt_depends,
             var_makedepends: opt_makedepends,
             build_func: opt_build_func.expect("build function should be set"),
-            package_func: opt_package_func.expect("package function should be set"),
+            package_funcs,
         })
     }
 
@@ -423,55 +530,67 @@ impl BuildFile {
         &mut self,
         callback: impl FnMut(Option<BuildOutputLine>),
     ) -> KocaResult<()> {
-        self.run_function_with_output(KocaFunction::Build, self.build_func.clone(), None, callback)
+        self.run_function_with_output(KocaFunction::Build, self.build_func.clone(), vec![], callback)
             .await
     }
 
-    /// Run the `package` function of the package.
-    /// /// Returns a:
-    /// - [`KocaError::IO`] if the package directory couldn't be created.
-    /// - [`KocaError::Func`] if the `package` function failed to execute.
-    pub async fn run_package(&mut self) -> KocaResult<()> {
-        self.run_package_with_output(|_| {}).await
+    /// Run a named `package` (or `package:NAME`) function.
+    pub async fn run_package_for(&mut self, pkg_name: &str) -> KocaResult<()> {
+        self.run_package_for_with_output(pkg_name, |_| {}).await
     }
 
-    pub async fn run_package_with_output(
+    pub async fn run_package_for_with_output(
         &mut self,
+        pkg_name: &str,
         callback: impl FnMut(Option<BuildOutputLine>),
     ) -> KocaResult<()> {
-        let absolute_pkgdir = path::absolute(dirs::PKG)
-            .expect("directory should exist at this point")
+        let (_, func) = self
+            .package_funcs
+            .iter()
+            .find(|(name, _)| name == pkg_name)
+            .ok_or_else(|| {
+                KocaError::FuncError(KocaFunction::Package)
+            })?;
+        let func = func.clone();
+
+        let pkg_dir = dirs::pkg_for(pkg_name);
+        fs::create_dir_all(&pkg_dir)?;
+        let absolute_pkgdir = path::absolute(&pkg_dir)
+            .expect("directory should be valid")
             .to_string_lossy()
             .into_owned();
 
-        self.run_function_with_output(
-            KocaFunction::Package,
-            self.package_func.clone(),
-            Some(("pkgdir", absolute_pkgdir)),
-            callback,
-        )
-        .await
+        let extra_env = vec![
+            ("pkgdir", absolute_pkgdir),
+            ("pkgname", pkg_name.to_string()),
+            ("pkgbase", self.packages.base().to_string()),
+        ];
+
+        self.run_function_with_output(KocaFunction::Package, func, extra_env, callback)
+            .await
     }
 
     async fn run_function_with_output(
         &mut self,
         function_kind: KocaFunction,
         function: FunctionDefinition,
-        extra_env: Option<(&str, String)>,
+        extra_env: Vec<(&str, String)>,
         mut callback: impl FnMut(Option<BuildOutputLine>),
     ) -> KocaResult<()> {
         self.shell.undefine_func(funcs::BUILD);
         self.shell.undefine_func(funcs::PACKAGE);
+        // Also undefine any split package functions.
+        for (name, _) in &self.package_funcs {
+            self.shell
+                .undefine_func(&format!("{}{}", funcs::PACKAGE_PREFIX, name));
+        }
         self.shell
             .define_func(function.fname.value.clone(), function.clone());
 
         self.add_vars();
         fs::create_dir_all(dirs::SRC)?;
-        if matches!(function_kind, KocaFunction::Package) {
-            fs::create_dir_all(dirs::PKG)?;
-        }
 
-        if let Some((name, value)) = extra_env {
+        for (name, value) in extra_env {
             self.shell
                 .set_env_global(name, ShellVariable::new(value))
                 .expect("setting environment variable shouldn't fail");
@@ -549,12 +668,18 @@ impl BuildFile {
         Ok(exit_code)
     }
 
-    /// Bundle the package into the given file format.
-    pub async fn bundle(&self, format: BundleFormat, out_file: &Path) -> KocaResult<()> {
+    /// Bundle the named package into the given file format.
+    pub async fn bundle(
+        &self,
+        pkg_name: &str,
+        format: BundleFormat,
+        out_file: &Path,
+    ) -> KocaResult<()> {
         let system_arch = format.arch_string(&self.var_arch[0]);
+        let pkg_dir = dirs::pkg_for(pkg_name);
 
         let config = NfpmConfig {
-            name: self.var_pkgname.clone(),
+            name: pkg_name.to_string(),
             // TODO: We need to figure out what architecture should properly be used at runtime of the built package.
             arch: system_arch.to_owned(),
             // TODO: We'll need to modify this when we support Windows/macOS in the future.
@@ -569,7 +694,7 @@ impl BuildFile {
             // TODO: We need to check for this somehow - figure out what the build file implementation looks like.
             license: "CONTACT-PUBLISHER".to_string(),
             depends: self.var_depends.iter().map(|d| d.to_string()).collect(),
-            contents: nfpm::get_nfpm_files(Path::new(dirs::PKG)),
+            contents: nfpm::get_nfpm_files(Path::new(&pkg_dir)),
         };
         let config_json =
             serde_json::to_string(&config).expect("build config should be valid json");
@@ -599,9 +724,19 @@ impl BuildFile {
         Ok(())
     }
 
-    /// Get the package's name.
-    pub fn pkgname(&self) -> &str {
-        &self.var_pkgname
+    /// Get the package kind (single vs split).
+    pub fn packages(&self) -> &PackageKind {
+        &self.packages
+    }
+
+    /// Get all package names.
+    pub fn pkgnames(&self) -> &[String] {
+        self.packages.names()
+    }
+
+    /// Get the package base name.
+    pub fn pkgbase(&self) -> &str {
+        self.packages.base()
     }
 
     /// Get the package's version.
@@ -661,6 +796,7 @@ fn spawn_output_reader(
 
 /// A mapping of `const` variable names to their stringified values.
 pub mod vars {
+    pub const PKGBASE: &str = "pkgbase";
     pub const PKGNAME: &str = "pkgname";
     pub const PKGVER: &str = "pkgver";
     pub const PKGREL: &str = "pkgrel";
@@ -675,12 +811,17 @@ pub mod vars {
 pub mod funcs {
     pub const BUILD: &str = "build";
     pub const PACKAGE: &str = "package";
+    /// Prefix for split package functions (e.g. `package:koca`).
+    pub const PACKAGE_PREFIX: &str = "package:";
 }
 
 /// The directories used by Koca.
 mod dirs {
     /// The directory where Koca stores source files.
     pub const SRC: &str = "koca/src";
-    /// The directory where Koca stores package files.
-    pub const PKG: &str = "koca/pkg";
+
+    /// Return the package directory for a named sub-package.
+    pub fn pkg_for(name: &str) -> String {
+        format!("koca/pkg/{name}")
+    }
 }

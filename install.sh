@@ -101,22 +101,32 @@ main() {
       local arch_deb
       arch_deb="$(deb_arch "$arch")"
       info "method   deb package"
-      local deb_file="${tmpdir}/koca.deb"
-      download "${base_url}/koca_${version}-1_${arch_deb}.deb" "$deb_file"
+
+      local koca_deb="${tmpdir}/koca.deb"
+      download "${base_url}/koca_${version}-1_${arch_deb}.deb" "$koca_deb"
+
+      local backend_deb="${tmpdir}/koca-backend-apt.deb"
+      download "${base_url}/koca-backend-apt_${version}-1_${arch_deb}.deb" "$backend_deb"
+
       info "installing via dpkg..."
-      sudo dpkg -i "$deb_file"
+      sudo dpkg -i "$koca_deb" "$backend_deb"
       ;;
     rpm)
       info "method   rpm package"
-      local rpm_file="${tmpdir}/koca.rpm"
-      download "${base_url}/koca_${version}-1_${arch}.rpm" "$rpm_file"
+
+      local koca_rpm="${tmpdir}/koca.rpm"
+      download "${base_url}/koca_${version}-1_${arch}.rpm" "$koca_rpm"
+
+      local backend_rpm="${tmpdir}/koca-backend-apt.rpm"
+      download "${base_url}/koca-backend-apt_${version}-1_${arch}.rpm" "$backend_rpm"
+
       info "installing via rpm..."
       if command -v dnf &>/dev/null; then
-        sudo dnf install -y "$rpm_file"
+        sudo dnf install -y "$koca_rpm" "$backend_rpm"
       elif command -v yum &>/dev/null; then
-        sudo yum install -y "$rpm_file"
+        sudo yum install -y "$koca_rpm" "$backend_rpm"
       else
-        sudo rpm -i "$rpm_file"
+        sudo rpm -i "$koca_rpm" "$backend_rpm"
       fi
       ;;
     binary)
