@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 brush = { workspace = true }
+brush-builtins = { workspace = true }
 brush-parser = { workspace = true }
 itertools = "0.14.0"
 koca-proto = { workspace = true }

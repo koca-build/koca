@@ -148,6 +148,7 @@ impl BuildFile {
             no_profile: true,
             no_rc: true,
             do_not_inherit_env: true,
+            builtins: brush_builtins::default_builtins(brush_builtins::BuiltinSet::BashMode),
             ..Default::default()
         }
     }

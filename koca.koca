@@ -1,7 +1,7 @@
 # Maintainer: Koca <contact@koca.dev>
 pkgbase=koca
 pkgname=(koca koca-backend-alpm koca-backend-apt)
-pkgver=0.4.0
+pkgver=0.4.1
 pkgrel=1
 pkgdesc='A modern, universal, and system-native package manager'
 arch=('x86_64')
