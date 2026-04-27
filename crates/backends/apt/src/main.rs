@@ -6,6 +6,7 @@ use koca_proto::{
 };
 
 mod handler;
+mod download;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
@@ -47,6 +48,10 @@ async fn main() -> Result<()> {
                         .await?;
                 }
             },
+
+            Command::Install { packages } => {
+                handler::commit_transaction(id, packages, false, &mut session).await;
+            }
 
             Command::Confirm => {
                 if let Some(pkgs) = pending.take() {

@@ -54,17 +54,17 @@ impl Backend {
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
-            ticker.tick().await;
-            callback(None); // tick
-
-            // Drain all buffered events that arrived during this tick window
-            loop {
-                match self.session.try_recv().map_err(proto_to_koca)? {
-                    None => break,
-                    Some(MessageBody::Event { event }) => callback(Some(&event)),
-                    Some(MessageBody::Result { result }) => return Ok(result),
-                    Some(MessageBody::Error { error }) => {
-                        return Err(KocaError::IO(std::io::Error::other(error.to_string())))
+            tokio::select! {
+                _ = ticker.tick() => {
+                    callback(None);
+                }
+                msg = self.session.recv() => {
+                    match msg.map_err(proto_to_koca)? {
+                        MessageBody::Event { event } => callback(Some(&event)),
+                        MessageBody::Result { result } => return Ok(result),
+                        MessageBody::Error { error } => {
+                            return Err(KocaError::IO(std::io::Error::other(error.to_string())))
+                        }
                     }
                 }
             }
@@ -100,7 +100,7 @@ fn spawn_process(binary: &str, sudo: bool, socket_name: &str) -> KocaResult<toki
     // find the binary.
     let bin_path = resolve_binary(binary)?;
 
-    let mut cmd = if sudo {
+    let mut cmd = if sudo && !nix::unistd::geteuid().is_root() {
         let mut c = tokio::process::Command::new("sudo");
         c.arg(&bin_path);
         c

@@ -48,6 +48,10 @@ async fn main() -> Result<()> {
                 }
             },
 
+            Command::Install { packages } => {
+                handler::commit_transaction(id, packages, false, &mut session).await;
+            }
+
             Command::Confirm => {
                 if let Some(pkgs) = pending.take() {
                     handler::commit_transaction(id, pkgs, false, &mut session).await;

@@ -3,6 +3,8 @@ use std::{env, fs, process::Command};
 
 fn main() {
     println!("cargo:rerun-if-changed=src/go");
+    println!("cargo:rerun-if-env-changed=CC");
+    println!("cargo:rerun-if-env-changed=CGO_ENABLED");
     env::set_current_dir("src/go").unwrap();
     let out_dir = env::var("OUT_DIR").unwrap();
     let out_path = PathBuf::from(&out_dir);
@@ -15,10 +17,21 @@ fn main() {
         return;
     }
 
-    let status = Command::new("go")
-        .args(["build", "-buildmode=c-archive", "-o"])
+    let mut cmd = Command::new("go");
+    cmd.args(["build", "-buildmode=c-archive"]);
+
+    // Propagate CC for musl/cross-compilation.
+    if let Ok(cc) = env::var("CC") {
+        cmd.env("CC", &cc);
+        cmd.env("CGO_ENABLED", "1");
+        cmd.args(["-ldflags", "-linkmode external -extldflags=-static"]);
+    }
+
+    cmd.arg("-o")
         .arg(format!("{out_dir}/libkoca-nfpm.a"))
-        .arg("main.go")
+        .arg("main.go");
+
+    let status = cmd
         .status()
         .expect("`go build` failed. Is `go` installed and on the latest version?");
 

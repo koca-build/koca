@@ -64,9 +64,9 @@ impl Distro {
     /// Returns the backend binary name to use for this distro.
     pub fn backend_binary(&self) -> &str {
         match self.id.as_str() {
-            "arch" | "manjaro" | "endeavouros" | "garuda" => "koca-backend-alpm",
+            "arch" | "manjaro" | "endeavouros" | "garuda" => "koca-backend-pacman",
             "debian" | "ubuntu" | "linuxmint" | "pop" => "koca-backend-apt",
-            _ => "koca-backend-alpm",
+            _ => "koca-backend-pacman",
         }
     }
 }
@@ -108,7 +108,7 @@ mod tests {
         let d = Distro::parse_os_release("ID=arch\n").unwrap();
         assert_eq!(d.id, "arch");
         assert_eq!(d.repology_repo(), "arch");
-        assert_eq!(d.backend_binary(), "koca-backend-alpm");
+        assert_eq!(d.backend_binary(), "koca-backend-pacman");
     }
 
     #[test]

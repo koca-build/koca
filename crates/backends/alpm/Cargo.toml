@@ -1,20 +1,23 @@
 [package]
-name = "koca-backend-alpm"
+name = "koca-backend-pacman"
 version.workspace = true
 edition.workspace = true
 description = "Arch Linux backend for Koca"
 license = "GPL-3.0"
 
 [[bin]]
-name = "koca-backend-alpm"
+name = "koca-backend-pacman"
 path = "src/main.rs"
 
 [dependencies]
 koca-proto = { workspace = true }
-alpm = "5.0.2"
-alpm-utils = "5.0.0"
-pacmanconf = "3.1.0"
+alpm-db = { workspace = true }
+alpm-repo-db = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
+flate2 = { workspace = true }
+nix = { workspace = true }
+reqwest = { workspace = true }
 serde_json = { workspace = true }
+tar = { workspace = true }
 tokio = { workspace = true }

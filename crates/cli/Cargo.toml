@@ -21,7 +21,6 @@ koca-proto = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
 crossterm = { workspace = true }
-ratatui = { workspace = true }
 tar = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }

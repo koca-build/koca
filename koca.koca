@@ -1,6 +1,6 @@
 # Maintainer: Koca <contact@koca.dev>
 pkgbase=koca
-pkgname=(koca koca-backend-alpm koca-backend-apt)
+pkgname=(koca koca-backend-pacman koca-backend-apt)
 pkgver=0.4.1
 pkgrel=1
 pkgdesc='A modern, universal, and system-native package manager'
@@ -16,7 +16,7 @@ build() {
     fi
 
     cd "${pkgbase}/"
-    cargo build --release --bin koca --bin koca-backend-alpm --bin koca-backend-apt
+    cargo build --release --bin koca --bin koca-backend-pacman --bin koca-backend-apt
 }
 
 package:koca() {
@@ -25,10 +25,10 @@ package:koca() {
     install -Dm 755 "target/release/koca" "${pkgdir}/usr/bin/koca"
 }
 
-package:koca-backend-alpm() {
+package:koca-backend-pacman() {
     pkgdesc='Arch Linux backend for Koca'
     cd "${pkgbase}/"
-    install -Dm 755 "target/release/koca-backend-alpm" "${pkgdir}/usr/bin/koca-backend-alpm"
+    install -Dm 755 "target/release/koca-backend-pacman" "${pkgdir}/usr/bin/koca-backend-pacman"
 }
 
 package:koca-backend-apt() {

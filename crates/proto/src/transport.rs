@@ -142,9 +142,7 @@ impl KocaSession {
     }
 
     /// Blocking async recv. Awaits until the next message arrives.
-    ///
-    /// Used internally by `call()`. Prefer `try_recv()` in TUI loops.
-    async fn recv(&mut self) -> Result<MessageBody, ProtoError> {
+    pub async fn recv(&mut self) -> Result<MessageBody, ProtoError> {
         match self.receiver.recv().await {
             Some(Ok(body)) => Ok(body),
             Some(Err(e)) => Err(e),

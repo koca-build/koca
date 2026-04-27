@@ -1,17 +1,16 @@
 use koca::{
     backend::Backend,
     distro::Distro,
-    resolve::{native_names, resolve_deps},
     BuildFile,
 };
 use koca_proto::{Command, InstalledStatus, ResultPayload};
-use std::{io, str::FromStr};
+use std::str::FromStr;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::{
     cli::CreateArgs,
     error::{CliError, CliMultiError, CliMultiResult},
-    tui::{CreateUi, KocaCreateCli, KocaCreateTui},
+    tui::{CreateUi, KocaCreateUi},
 };
 
 fn ke(e: koca::KocaError) -> CliMultiError {
@@ -31,11 +30,7 @@ fn spawn_line_reader(
 }
 
 pub async fn run(args: CreateArgs) -> CliMultiResult<()> {
-    let mut ui: Box<dyn CreateUi> = if std::io::IsTerminal::is_terminal(&io::stdout()) {
-        Box::new(KocaCreateTui::new()?)
-    } else {
-        Box::new(KocaCreateCli::new())
-    };
+    let mut ui: Box<dyn CreateUi> = Box::new(KocaCreateUi::new()?);
 
     let result = run_inner(&args, ui.as_mut()).await;
 
@@ -60,7 +55,6 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
         Distro::detect().map_err(ke)?
     };
 
-    let repo = distro.repology_repo();
     let backend_bin = distro.backend_binary();
 
     let mut newly_installed: Vec<String> = Vec::new();
@@ -68,42 +62,36 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
     let installed_count: u32;
 
     if !makedepends.is_empty() || !depends.is_empty() {
-        let resolved_makedeps = if makedepends.is_empty() {
-            vec![]
-        } else {
-            ui.start_resolve()?;
-
-            let mut ticker = tokio::time::interval(std::time::Duration::from_millis(80));
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-            let mut resolve_fut = std::pin::pin!(resolve_deps(&makedepends, &repo));
-            loop {
-                tokio::select! {
-                    result = &mut resolve_fut => break result.map_err(ke)?,
-                    _ = ticker.tick() => { ui.tick()?; }
-                }
-            }
-        };
-
-        let makedep_natives = native_names(&resolved_makedeps);
+        // Use dep names directly as native package names (no repology lookup).
+        let makedep_natives: Vec<String> = makedepends.iter().map(|d| d.name.clone()).collect();
 
         if !makedep_natives.is_empty() {
             // Build a map from native package name → original constraint for
             // version satisfaction checks.
             let native_to_constraint: std::collections::HashMap<&str, &koca::dep::DepConstraint> =
-                resolved_makedeps
+                makedepends
                     .iter()
-                    .flat_map(|r| r.native_names.iter().map(|n| (n.as_str(), &r.constraint)))
+                    .map(|d| (d.name.as_str(), d))
                     .collect();
+
+            ui.start_resolve()?;
+            let mut resolve_ticker = tokio::time::interval(std::time::Duration::from_millis(80));
+            resolve_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             let mut check_backend = Backend::spawn(backend_bin, false).await.map_err(ke)?;
 
-            let check_result = check_backend
-                .call(Command::CheckInstalled {
+            let check_result = {
+                let fut = check_backend.call(Command::CheckInstalled {
                     packages: makedep_natives.clone(),
-                })
-                .await
-                .map_err(ke)?;
+                });
+                tokio::pin!(fut);
+                loop {
+                    tokio::select! {
+                        _ = resolve_ticker.tick() => { ui.tick().ok(); }
+                        result = &mut fut => break result.map_err(ke)?,
+                    }
+                }
+            };
 
             let statuses = match check_result {
                 ResultPayload::CheckInstalled { packages } => packages,
@@ -128,12 +116,18 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
                 .collect();
 
             if !missing.is_empty() {
-                let plan_result = check_backend
-                    .call(Command::InstallPlan {
+                let plan_result = {
+                    let fut = check_backend.call(Command::InstallPlan {
                         packages: missing.clone(),
-                    })
-                    .await
-                    .map_err(ke)?;
+                    });
+                    tokio::pin!(fut);
+                    loop {
+                        tokio::select! {
+                            _ = resolve_ticker.tick() => { ui.tick().ok(); }
+                            result = &mut fut => break result.map_err(ke)?,
+                        }
+                    }
+                };
 
                 let (actions, plan_download) = match plan_result {
                     ResultPayload::InstallPlan {
@@ -145,6 +139,7 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
                 };
 
                 check_backend.shutdown().await.map_err(ke)?;
+                ui.finish_resolve()?;
 
                 let confirmed = ui.show_confirm(&actions, &depends, args.noconfirm)?;
 
@@ -156,15 +151,8 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
                 let mut sudo_backend = Backend::spawn(backend_bin, true).await.map_err(ke)?;
                 ui.resume()?;
 
-                sudo_backend
-                    .call(Command::InstallPlan {
-                        packages: missing.clone(),
-                    })
-                    .await
-                    .map_err(ke)?;
-
                 let result = sudo_backend
-                    .call_streaming(Command::Confirm, |event| match event {
+                    .call_streaming(Command::Install { packages: missing.clone() }, |event| match event {
                         None => {
                             ui.tick().ok();
                         }
@@ -186,6 +174,7 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
                 sudo_backend.shutdown().await.map_err(ke)?;
             } else {
                 check_backend.shutdown().await.map_err(ke)?;
+                ui.finish_resolve()?;
             }
         }
     }
@@ -244,29 +233,23 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
     spawn_line_reader(stdout, tx.clone());
     spawn_line_reader(stderr, tx);
 
-    loop {
-        ticker.tick().await;
-        ui.tick()?;
-
-        let mut done = false;
-        loop {
-            match rx.try_recv() {
-                Ok(line) => {
-                    ui.on_package_line(&line).ok();
-                }
-                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
-                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                    done = true;
-                    break;
+    let status = loop {
+        tokio::select! {
+            _ = ticker.tick() => {
+                ui.tick()?;
+            }
+            maybe_line = rx.recv() => {
+                match maybe_line {
+                    Some(line) => {
+                        ui.on_package_line(&line).ok();
+                    }
+                    None => {
+                        break child.wait().await.map_err(|err| CliError::Io { err })?;
+                    }
                 }
             }
         }
-        if done {
-            break;
-        }
-    }
-
-    let status = child.wait().await.map_err(|err| CliError::Io { err })?;
+    };
 
     if !status.success() {
         ui.show_failure("package")?;
