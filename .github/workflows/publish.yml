@@ -21,7 +21,6 @@ jobs:
 
       - name: Resolve release metadata
         id: meta
-        shell: bash
         run: |
           set -euo pipefail
           VERSION="$(cargo pkgid -p koca | awk -F'#' '{print $2}')"
@@ -42,22 +41,15 @@ jobs:
     if: needs.prepare.outputs.tag_exists == 'false'
     permissions:
       contents: write
-    container:
-      image: archlinux:latest
     steps:
-      - name: Install system dependencies
-        run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup fakeroot go apt rpm-tools clang
-
-      - name: Setup Rust
-        run: rustup default stable
-
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Fix git ownership
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Install musl toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          rustup target add x86_64-unknown-linux-musl
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -68,25 +60,19 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: archlinux-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: musl-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Build release artifacts
-        shell: bash
+      - name: Build static binary
         run: |
           set -euo pipefail
-          cargo run --locked --bin koca -- create koca.koca --output-type all --noconfirm
-          cargo build --locked --release --package cli --bin koca
+          cargo build --locked --release --target x86_64-unknown-linux-musl --bin koca
 
       - name: Collect release artifacts
-        shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
-          shopt -s nullglob
-          for pkg in ./*.deb ./*.rpm; do
-            mv "$pkg" dist/
-          done
-          cp target/release/koca dist/koca
+          cp target/x86_64-unknown-linux-musl/release/koca dist/koca
+          file dist/koca
           ls -lh dist
 
       - name: Upload workflow artifacts
@@ -105,33 +91,6 @@ jobs:
           generate_release_notes: true
           files: dist/*
           fail_on_unmatched_files: true
-
-
-#  publish_npm:
-#    runs-on: ubuntu-latest
-#    needs: prepare
-#    if: needs.prepare.outputs.tag_exists == 'false'
-#    permissions:
-#      contents: read
-#    steps:
-#      - name: Checkout
-#        uses: actions/checkout@v4
-#
-#      - name: Setup Node.js
-#        uses: actions/setup-node@v4
-#        with:
-#          node-version: 22
-#          registry-url: https://registry.npmjs.org
-#
-#      - name: Publish @koca-build/cli
-#        shell: bash
-#        run: |
-#          set -euo pipefail
-#          cd npm/cli
-#          npm version "${{ needs.prepare.outputs.version }}" --no-git-tag-version --allow-same-version
-#          npm publish --access public
-#        env:
-#          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   publish_crates:
     runs-on: ubuntu-latest
