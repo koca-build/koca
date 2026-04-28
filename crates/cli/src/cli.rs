@@ -32,8 +32,9 @@ impl OutputType {
 
 #[derive(Parser)]
 pub struct CreateArgs {
-    /// The path to the build file.
-    pub build_file: PathBuf,
+    /// The path to the build file. If omitted, searches for a single *.koca
+    /// file in the current directory, then in a `koca/` subdirectory.
+    pub build_file: Option<PathBuf>,
     /// The output file type.
     #[arg(long, value_enum, default_value_t = OutputType::All)]
     pub output_type: OutputType,

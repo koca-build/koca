@@ -2,6 +2,7 @@
 
 mod cli;
 mod create;
+mod discover;
 mod error;
 mod internal;
 mod tui;
