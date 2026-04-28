@@ -21,7 +21,6 @@ const LOCK_FILE: &str = "/var/lib/pacman/db.lck";
 
 struct LocalPkg {
     version: String,
-    size: u64,
     reason: u32,
 }
 
@@ -34,7 +33,6 @@ fn read_local_pkg(name: &str) -> Option<LocalPkg> {
         if fields.get("NAME").map(|n| n.as_str()) == Some(name) {
             return Some(LocalPkg {
                 version: fields.get("VERSION").cloned().unwrap_or_default(),
-                size: parse_u64(&fields, "SIZE"),
                 reason: fields
                     .get("REASON")
                     .and_then(|s| s.parse().ok())
@@ -62,7 +60,7 @@ fn read_sync_pkgs(names: &HashSet<String>) -> HashMap<String, SyncPkg> {
 
     for db_entry in dbs.flatten() {
         let path = db_entry.path();
-        if !path.extension().is_some_and(|e| e == "db") {
+        if path.extension().is_none_or(|e| e != "db") {
             continue;
         }
         let file = match std::fs::File::open(&path) {

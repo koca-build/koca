@@ -680,7 +680,7 @@ impl BuildFile {
 
         let mut pkg = rfpm::Package::new(
             pkg_name,
-            &self.var_version.pkgver.to_string(),
+            self.var_version.pkgver.to_string(),
             rfpm_arch,
             &self.var_pkgdesc,
         );

@@ -54,7 +54,7 @@ fn show_with_columns_inner(items: &[String], colored: Option<&[String]>, indent:
     // Find the max number of columns that fits.
     let mut num_cols = 1;
     for try_cols in (2..=items.len()).rev() {
-        let num_rows = (items.len() + try_cols - 1) / try_cols;
+        let num_rows = items.len().div_ceil(try_cols);
         // Compute column widths (column-major).
         let mut total = 0;
         let mut fits = true;
@@ -78,7 +78,7 @@ fn show_with_columns_inner(items: &[String], colored: Option<&[String]>, indent:
         }
     }
 
-    let num_rows = (items.len() + num_cols - 1) / num_cols;
+    let num_rows = items.len().div_ceil(num_cols);
 
     // Compute per-column widths.
     let mut col_widths = Vec::with_capacity(num_cols);
@@ -93,14 +93,14 @@ fn show_with_columns_inner(items: &[String], colored: Option<&[String]>, indent:
     // Print column-major.
     for row in 0..num_rows {
         print!("{}", " ".repeat(indent));
-        for col in 0..num_cols {
+        for (col, &col_w) in col_widths.iter().enumerate().take(num_cols) {
             let idx = col * num_rows + row;
             if let Some(item) = items.get(idx) {
                 let display = colored.and_then(|c| c.get(idx)).unwrap_or(item);
                 print!("{}", display);
                 if col + 1 < num_cols {
                     // Pad based on plain width, not colored width.
-                    let pad = col_widths[col].saturating_sub(item.len()) + col_gap;
+                    let pad = col_w.saturating_sub(item.len()) + col_gap;
                     print!("{}", " ".repeat(pad));
                 }
             }
