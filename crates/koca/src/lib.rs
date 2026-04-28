@@ -8,7 +8,6 @@ pub mod dep;
 pub mod distro;
 mod error;
 mod file;
-mod nfpm;
 pub mod resolve;
 pub use error::*;
 pub use file::*;

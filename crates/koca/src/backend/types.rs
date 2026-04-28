@@ -32,6 +32,7 @@ pub struct Request {
 pub enum Command {
     CheckInstalled { packages: Vec<String> },
     InstallPlan { packages: Vec<String> },
+    Install { packages: Vec<String> },
     Confirm,
     Abort,
     Remove { packages: Vec<String> },
@@ -154,6 +155,7 @@ pub enum DownloadEvent {
     Progress {
         bytes_done: u64,
         bytes_total: u64,
+        percent: Option<u32>,
         active: Vec<String>,
     },
     ItemDone {

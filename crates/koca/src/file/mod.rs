@@ -2,26 +2,24 @@ mod arch;
 mod parser;
 mod version;
 
-use crate::{
-    nfpm::{self, NfpmConfig},
-    KocaError, KocaMultiResult, KocaParserError, KocaResult,
-};
+use crate::{KocaError, KocaMultiResult, KocaParserError, KocaResult};
 pub use arch::Arch;
 use brush::{CreateOptions, Shell, ShellVariable};
 use brush_parser::{ast::FunctionDefinition, word::WordPiece};
 use itertools::Itertools;
-use nfpm_sys::NfpmError;
 use parser::DeclValue;
 use std::{
     collections::HashMap,
     env, fmt,
     fs::{self, File},
     io::{BufRead, BufReader, Read},
+    os::unix::fs::MetadataExt,
     path::{self, Path},
     str::FromStr,
 };
 use tokio::sync::mpsc;
 pub use version::{PkgVersion, Version};
+use walkdir::WalkDir;
 
 /// The output bundle format.
 pub enum BundleFormat {
@@ -435,9 +433,7 @@ impl BuildFile {
 
         // Check that build() is defined.
         if opt_build_func.is_none() {
-            errs.push(
-                KocaParserError::MissingRequiredFunction(funcs::BUILD.to_string()).into(),
-            );
+            errs.push(KocaParserError::MissingRequiredFunction(funcs::BUILD.to_string()).into());
         }
 
         // TODO: We need to handle this better so the user knows if the epoch/pkgrel itself is invalid.
@@ -531,8 +527,13 @@ impl BuildFile {
         &mut self,
         callback: impl FnMut(Option<BuildOutputLine>),
     ) -> KocaResult<()> {
-        self.run_function_with_output(KocaFunction::Build, self.build_func.clone(), vec![], callback)
-            .await
+        self.run_function_with_output(
+            KocaFunction::Build,
+            self.build_func.clone(),
+            vec![],
+            callback,
+        )
+        .await
     }
 
     /// Run a named `package` (or `package:NAME`) function.
@@ -549,9 +550,7 @@ impl BuildFile {
             .package_funcs
             .iter()
             .find(|(name, _)| name == pkg_name)
-            .ok_or_else(|| {
-                KocaError::FuncError(KocaFunction::Package)
-            })?;
+            .ok_or_else(|| KocaError::FuncError(KocaFunction::Package))?;
         let func = func.clone();
 
         let pkg_dir = dirs::pkg_for(pkg_name);
@@ -676,52 +675,68 @@ impl BuildFile {
         format: BundleFormat,
         out_file: &Path,
     ) -> KocaResult<()> {
-        let system_arch = format.arch_string(&self.var_arch[0]);
         let pkg_dir = dirs::pkg_for(pkg_name);
+        let rfpm_arch = self.var_arch[0].to_rfpm();
 
-        let config = NfpmConfig {
-            name: pkg_name.to_string(),
-            // TODO: We need to figure out what architecture should properly be used at runtime of the built package.
-            arch: system_arch.to_owned(),
-            // TODO: We'll need to modify this when we support Windows/macOS in the future.
-            platform: "linux".to_string(),
-            epoch: self.var_version.epoch,
-            version: self.var_version.pkgver.to_string(),
-            release: self.var_version.pkgrel,
-            // TODO: We need to get the maintainer from the build file.
-            // Dependent on https://github.com/reubeno/brush/issues/513.
-            maintainer: "Foo Bar <foobar@example.com>".to_string(),
-            description: self.var_pkgdesc.clone(),
-            // TODO: We need to check for this somehow - figure out what the build file implementation looks like.
-            license: "CONTACT-PUBLISHER".to_string(),
-            depends: self.var_depends.iter().map(|d| d.to_string()).collect(),
-            contents: nfpm::get_nfpm_files(Path::new(&pkg_dir)),
-        };
-        let config_json =
-            serde_json::to_string(&config).expect("build config should be valid json");
-
-        // Make sure we can access the build file.
-        // our nFPM bindings check for this too, but it's hard to get the error out of it.
-        if let Err(err) = File::create(out_file) {
-            return Err(err.into());
-        }
-
-        // Build with `nfpm`.
-        let nfpm_res = nfpm_sys::run_bundle(
-            &out_file.display().to_string(),
-            format.extension(),
-            &config_json,
+        let mut pkg = rfpm::Package::new(
+            pkg_name,
+            &self.var_version.pkgver.to_string(),
+            rfpm_arch,
+            &self.var_pkgdesc,
         );
 
-        if let Err(err) = nfpm_res {
-            match err {
-                NfpmError::JSON => unreachable!("build config should always deserialize"),
-                NfpmError::OutputFile => {
-                    unreachable!("build file should have been checked earlier")
-                }
-                NfpmError::PkgCreation => unreachable!("package creation should always work"),
+        pkg.release = self
+            .var_version
+            .pkgrel
+            .map(|r| r.to_string())
+            .unwrap_or_else(|| "1".to_string());
+        pkg.epoch = self.var_version.epoch;
+        // TODO: Get maintainer from build file (https://github.com/reubeno/brush/issues/513).
+        pkg.maintainer = Some("Foo Bar <foobar@example.com>".to_string());
+        // TODO: Get license from build file.
+        pkg.license = Some("CONTACT-PUBLISHER".to_string());
+        pkg.depends = self.var_depends.iter().map(|d| d.to_string()).collect();
+
+        // Walk the package directory and add files. Ownership defaults to root:root.
+        for res_entry in WalkDir::new(&pkg_dir) {
+            let entry = res_entry.map_err(|e| std::io::Error::other(e.to_string()))?;
+            if entry.file_type().is_dir() {
+                continue;
             }
+
+            let src_path =
+                path::absolute(entry.path()).expect("getting absolute path should always succeed");
+            let dst_path = entry
+                .path()
+                .strip_prefix(&pkg_dir)
+                .expect("pkgdir strip should always succeed");
+
+            let metadata = entry
+                .metadata()
+                .expect("file metadata should always be readable");
+            let mode = metadata.mode() & 0o7777;
+
+            let file = File::open(&src_path)?;
+            pkg.add_file_with(
+                format!("/{}", dst_path.display()),
+                file,
+                rfpm::FileOptions {
+                    mode,
+                    ..Default::default()
+                },
+            );
         }
+
+        let mut out = File::create(out_file)?;
+        match format {
+            BundleFormat::Deb => pkg
+                .write_deb(&mut out)
+                .map_err(|e| std::io::Error::other(e.to_string()))?,
+            BundleFormat::Rpm => pkg
+                .write_rpm(&mut out)
+                .map_err(|e| std::io::Error::other(e.to_string()))?,
+        }
+
         Ok(())
     }
 

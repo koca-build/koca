@@ -3,10 +3,6 @@ resolver = "2"
 members = [
     "crates/koca",
     "crates/cli",
-    "crates/nfpm-sys",
-    "crates/proto",
-    "crates/backends/alpm",
-    "crates/backends/apt",
 ]
 
 [workspace.package]
@@ -23,7 +19,7 @@ clap = { version = "4.5.37", features = ["derive", "env"] }
 directories = "6.0.0"
 flate2 = "1.1.2"
 koca = { path = "crates/koca", version = "0.4.1" }
-nfpm-sys = { path = "crates/nfpm-sys" }
+rfpm = "0.1.3"
 semver = "1.0.26"
 thiserror = "2.0.12"
 tar = "0.4.44"
@@ -34,12 +30,21 @@ regex = "1.11.1"
 reqwest = { version = "0.12.19", default-features = false, features = [
     "rustls-tls",
 ] }
+sha1 = "0.10.6"
+sha2 = "0.10.9"
+md-5 = "0.10.6"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 nix = { version = "0.29", features = ["user", "term"] }
 walkdir = "2.5.0"
 interprocess = { version = "2", features = ["tokio"] }
-koca-proto = { path = "crates/proto" }
 libversion = "0.3.1"
 ratatui = "0.30"
 crossterm = "0.29"
+alpm-common = "0.2.1"
+alpm-compress = "0.1.3"
+alpm-db = "0.2.2"
+alpm-repo-db = "0.1.2"
+alpm-types = "0.11.2"
+bzip2 = { version = "0.6.0", features = ["static"] }
+liblzma = { version = "0.4.1", features = ["static"] }

@@ -8,18 +8,26 @@ readme = "../../README.md"
 repository.workspace = true
 
 [dependencies]
+anyhow = { workspace = true }
 brush = { workspace = true }
 brush-builtins = { workspace = true }
 brush-parser = { workspace = true }
+clap = { workspace = true }
+flate2 = { workspace = true }
+interprocess = { workspace = true }
 itertools = "0.14.0"
-koca-proto = { workspace = true }
 libversion = { workspace = true }
+md-5 = { workspace = true }
 nix = { workspace = true }
 repology = { workspace = true }
-nfpm-sys = { workspace = true }
+reqwest = { workspace = true }
+rfpm = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha1 = { workspace = true }
+sha2 = { workspace = true }
+tar = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 walkdir = { workspace = true }
