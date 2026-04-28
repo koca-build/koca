@@ -3,6 +3,11 @@ publish = false
 changelog_update = true
 git_release_enable = true
 git_tag_enable = true
+pr_name = "chore: release v{{ version }}"
+
+[[package]]
+name = "koca"
+changelog_path = "CHANGELOG.md"
 
 [[package]]
 name = "cli"
