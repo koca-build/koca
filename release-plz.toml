@@ -1,0 +1,9 @@
+[workspace]
+changelog_update = true
+git_release_enable = true
+git_tag_enable = true
+
+[[package]]
+name = "cli"
+publish = false
+release = false
