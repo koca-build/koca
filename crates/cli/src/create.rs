@@ -68,10 +68,7 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
             // Build a map from native package name → original constraint for
             // version satisfaction checks.
             let native_to_constraint: std::collections::HashMap<&str, &koca::dep::DepConstraint> =
-                makedepends
-                    .iter()
-                    .map(|d| (d.name.as_str(), d))
-                    .collect();
+                makedepends.iter().map(|d| (d.name.as_str(), d)).collect();
 
             ui.start_resolve()?;
             let mut resolve_ticker = tokio::time::interval(std::time::Duration::from_millis(80));
@@ -151,14 +148,19 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
                 ui.resume()?;
 
                 let result = sudo_backend
-                    .call_streaming(Command::Install { packages: missing.clone() }, |event| match event {
-                        None => {
-                            ui.tick().ok();
-                        }
-                        Some(ev) => {
-                            ui.on_event(ev).ok();
-                        }
-                    })
+                    .call_streaming(
+                        Command::Install {
+                            packages: missing.clone(),
+                        },
+                        |event| match event {
+                            None => {
+                                ui.tick().ok();
+                            }
+                            Some(ev) => {
+                                ui.on_event(ev).ok();
+                            }
+                        },
+                    )
                     .await
                     .map_err(ke)?;
 

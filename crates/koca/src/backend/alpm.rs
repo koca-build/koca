@@ -35,7 +35,10 @@ fn read_local_pkg(name: &str) -> Option<LocalPkg> {
             return Some(LocalPkg {
                 version: fields.get("VERSION").cloned().unwrap_or_default(),
                 size: parse_u64(&fields, "SIZE"),
-                reason: fields.get("REASON").and_then(|s| s.parse().ok()).unwrap_or(0),
+                reason: fields
+                    .get("REASON")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0),
             });
         }
     }
@@ -254,7 +257,13 @@ fn extract_alpm_msg(line: &str) -> Option<&str> {
 
 /// `"installed nano (9.0-1)"` → `Some("nano")`
 fn parse_pkg_action(msg: &str) -> Option<String> {
-    for prefix in ["installed ", "upgraded ", "downgraded ", "reinstalled ", "removed "] {
+    for prefix in [
+        "installed ",
+        "upgraded ",
+        "downgraded ",
+        "reinstalled ",
+        "removed ",
+    ] {
         if let Some(rest) = msg.strip_prefix(prefix) {
             return Some(rest.split_once(' ')?.0.to_string());
         }
@@ -288,7 +297,15 @@ pub fn check_installed(packages: &[String]) -> Result<ResultPayload, ProtocolErr
 
 pub fn install_plan(packages: &[String]) -> Result<(ResultPayload, Vec<String>), ProtocolError> {
     let output = run_pacman(
-        &[&["-S", "--print", "--print-format", "%n|%v|%r"], packages.iter().map(|s| s.as_str()).collect::<Vec<_>>().as_slice()].concat(),
+        &[
+            &["-S", "--print", "--print-format", "%n|%v|%r"],
+            packages
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .as_slice(),
+        ]
+        .concat(),
     )?;
 
     if !output.status.success() {
@@ -325,7 +342,10 @@ pub fn install_plan(packages: &[String]) -> Result<(ResultPayload, Vec<String>),
                 Some(ref l) if l.version == *version => {
                     (ActionKind::Reinstall, Some(l.version.clone()))
                 }
-                Some(ref l) if libversion::version_compare2(&l.version, version) == std::cmp::Ordering::Less => {
+                Some(ref l)
+                    if libversion::version_compare2(&l.version, version)
+                        == std::cmp::Ordering::Less =>
+                {
                     (ActionKind::Upgrade, Some(l.version.clone()))
                 }
                 Some(l) => (ActionKind::Downgrade, Some(l.version)),
@@ -450,7 +470,8 @@ async fn download_packages(
     // Filter out cached items.
     let mut to_download: Vec<(String, String, String, u64)> = Vec::new();
     for item in items {
-        if item.url.starts_with("file://") || PathBuf::from(CACHE_DIR).join(&item.filename).exists() {
+        if item.url.starts_with("file://") || PathBuf::from(CACHE_DIR).join(&item.filename).exists()
+        {
             let _ = tx.send(ProtoEvent::Download {
                 inner: ProtoDownloadEvent::ItemDone {
                     package: item.package.clone(),
@@ -475,7 +496,9 @@ async fn download_packages(
     });
 
     if to_download.is_empty() {
-        let _ = tx.send(ProtoEvent::Download { inner: ProtoDownloadEvent::Done });
+        let _ = tx.send(ProtoEvent::Download {
+            inner: ProtoDownloadEvent::Done,
+        });
         return Ok(());
     }
 
@@ -567,12 +590,17 @@ async fn download_packages(
     }
 
     for h in handles {
-        h.await.unwrap_or_else(|_| Err(ProtocolError {
-            code: ErrorCode::Internal, message: "download task panicked".into(),
-        }))?;
+        h.await.unwrap_or_else(|_| {
+            Err(ProtocolError {
+                code: ErrorCode::Internal,
+                message: "download task panicked".into(),
+            })
+        })?;
     }
 
-    let _ = tx.send(ProtoEvent::Download { inner: ProtoDownloadEvent::Done });
+    let _ = tx.send(ProtoEvent::Download {
+        inner: ProtoDownloadEvent::Done,
+    });
     Ok(())
 }
 
@@ -643,17 +671,23 @@ pub async fn commit_transaction(
                     });
                 }
                 Ok(pkgs)
-            }).await.unwrap_or_else(|_| Err(ProtocolError {
-                code: ErrorCode::Internal,
-                message: "task panicked".into(),
-            }));
+            })
+            .await
+            .unwrap_or_else(|_| {
+                Err(ProtocolError {
+                    code: ErrorCode::Internal,
+                    message: "task panicked".into(),
+                })
+            });
         }
 
         // Install: download first, then install from cache.
         let items = match tokio::task::spawn_blocking({
             let pkgs = pkgs.clone();
             move || get_download_urls(&pkgs)
-        }).await {
+        })
+        .await
+        {
             Ok(Ok(i)) => i,
             Ok(Err(e)) => {
                 drop(event_tx);
@@ -726,10 +760,14 @@ pub async fn commit_transaction(
             }
             let _ = run_pacman(&mark_args);
             Ok(pkgs)
-        }).await.unwrap_or_else(|_| Err(ProtocolError {
-            code: ErrorCode::Internal,
-            message: "task panicked".into(),
-        }))
+        })
+        .await
+        .unwrap_or_else(|_| {
+            Err(ProtocolError {
+                code: ErrorCode::Internal,
+                message: "task panicked".into(),
+            })
+        })
     });
 
     // Drop our sender so channel closes when task finishes.

@@ -48,11 +48,8 @@ pub async fn run(args: PackageArgs) -> CliMultiResult<()> {
         // Bundle into each output format.
         for bundle_format in args.output_type.bundle_formats() {
             let arch = build_file.arch()[0].clone();
-            let file_name = bundle_format.output_filename(
-                pkg_name,
-                &build_file.version().to_string(),
-                &arch,
-            );
+            let file_name =
+                bundle_format.output_filename(pkg_name, &build_file.version().to_string(), &arch);
 
             zolt::infoln!(
                 "Creating package into {}{}...",

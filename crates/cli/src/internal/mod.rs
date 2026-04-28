@@ -10,13 +10,17 @@ pub async fn run(args: InternalArgs) -> CliMultiResult<()> {
         InternalCommand::BackendApt(args) => {
             backend::run_backend_loop(&args.socket, BackendKind::Apt)
                 .await
-                .map_err(|e| crate::error::CliError::Io { err: std::io::Error::other(e.to_string()) })?;
+                .map_err(|e| crate::error::CliError::Io {
+                    err: std::io::Error::other(e.to_string()),
+                })?;
             Ok(())
         }
         InternalCommand::BackendAlpm(args) => {
             backend::run_backend_loop(&args.socket, BackendKind::Alpm)
                 .await
-                .map_err(|e| crate::error::CliError::Io { err: std::io::Error::other(e.to_string()) })?;
+                .map_err(|e| crate::error::CliError::Io {
+                    err: std::io::Error::other(e.to_string()),
+                })?;
             Ok(())
         }
     }

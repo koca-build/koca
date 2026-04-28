@@ -17,9 +17,9 @@ use std::{
     path::{self, Path},
     str::FromStr,
 };
-use walkdir::WalkDir;
 use tokio::sync::mpsc;
 pub use version::{PkgVersion, Version};
+use walkdir::WalkDir;
 
 /// The output bundle format.
 pub enum BundleFormat {
@@ -433,9 +433,7 @@ impl BuildFile {
 
         // Check that build() is defined.
         if opt_build_func.is_none() {
-            errs.push(
-                KocaParserError::MissingRequiredFunction(funcs::BUILD.to_string()).into(),
-            );
+            errs.push(KocaParserError::MissingRequiredFunction(funcs::BUILD.to_string()).into());
         }
 
         // TODO: We need to handle this better so the user knows if the epoch/pkgrel itself is invalid.
@@ -529,8 +527,13 @@ impl BuildFile {
         &mut self,
         callback: impl FnMut(Option<BuildOutputLine>),
     ) -> KocaResult<()> {
-        self.run_function_with_output(KocaFunction::Build, self.build_func.clone(), vec![], callback)
-            .await
+        self.run_function_with_output(
+            KocaFunction::Build,
+            self.build_func.clone(),
+            vec![],
+            callback,
+        )
+        .await
     }
 
     /// Run a named `package` (or `package:NAME`) function.
@@ -547,9 +550,7 @@ impl BuildFile {
             .package_funcs
             .iter()
             .find(|(name, _)| name == pkg_name)
-            .ok_or_else(|| {
-                KocaError::FuncError(KocaFunction::Package)
-            })?;
+            .ok_or_else(|| KocaError::FuncError(KocaFunction::Package))?;
         let func = func.clone();
 
         let pkg_dir = dirs::pkg_for(pkg_name);
@@ -696,7 +697,7 @@ impl BuildFile {
         pkg.license = Some("CONTACT-PUBLISHER".to_string());
         pkg.depends = self.var_depends.iter().map(|d| d.to_string()).collect();
 
-        // Walk the package directory and add files with fakeroot-aware ownership.
+        // Walk the package directory and add files. Ownership defaults to root:root.
         for res_entry in WalkDir::new(&pkg_dir) {
             let entry = res_entry.map_err(|e| std::io::Error::other(e.to_string()))?;
             if entry.file_type().is_dir() {

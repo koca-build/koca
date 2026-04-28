@@ -1,16 +1,16 @@
 use std::io::{self, Write};
 
 use crossterm::{cursor, execute, terminal};
-use koca::dep::DepConstraint;
 use koca::backend::{ActionKind, DownloadEvent, Event, InstallEvent, PlannedAction, RemoveEvent};
+use koca::dep::DepConstraint;
 use zolt::Colorize;
 
 use super::{CreateUi, BUILD_GUTTER_MAX, SPINNERS};
 
 /// Clear the current line and move cursor to column 0.
-fn clear_line() -> io::Result<()> {
+fn clear_line(out: &mut impl Write) -> io::Result<()> {
     execute!(
-        io::stdout(),
+        out,
         cursor::MoveToColumn(0),
         terminal::Clear(terminal::ClearType::CurrentLine)
     )
@@ -23,7 +23,7 @@ fn erase_lines(out: &mut impl Write, count: u16) -> io::Result<()> {
     }
     execute!(out, cursor::MoveUp(count))?;
     for _ in 0..count {
-        clear_line()?;
+        clear_line(out)?;
         writeln!(out)?;
     }
     execute!(out, cursor::MoveUp(count))
@@ -96,9 +96,7 @@ fn show_with_columns_inner(items: &[String], colored: Option<&[String]>, indent:
         for col in 0..num_cols {
             let idx = col * num_rows + row;
             if let Some(item) = items.get(idx) {
-                let display = colored
-                    .and_then(|c| c.get(idx))
-                    .unwrap_or(item);
+                let display = colored.and_then(|c| c.get(idx)).unwrap_or(item);
                 print!("{}", display);
                 if col + 1 < num_cols {
                     // Pad based on plain width, not colored width.
@@ -139,7 +137,7 @@ impl BuildState {
         }
 
         let spinner = SPINNERS[tick % SPINNERS.len()];
-        clear_line()?;
+        clear_line(&mut out)?;
         writeln!(out, "{} {}", spinner.blue(), header.bold())?;
 
         let start = self.lines.len().saturating_sub(BUILD_GUTTER_MAX);
@@ -148,9 +146,16 @@ impl BuildState {
         let width = terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
 
         for line in visible {
-            clear_line()?;
+            clear_line(&mut out)?;
             let avail = width.saturating_sub(4); // "  │ " prefix
-            let truncated = if line.len() > avail { &line[..avail] } else { line.as_str() };
+            let truncated = if line.len() > avail {
+                match line.char_indices().nth(avail) {
+                    Some((idx, _)) => &line[..idx],
+                    None => line.as_str(),
+                }
+            } else {
+                line.as_str()
+            };
             writeln!(out, "  {} {}", "│".dimmed(), truncated.dimmed())?;
             drawn += 1;
         }
@@ -162,7 +167,7 @@ impl BuildState {
     fn finish(&mut self, summary: &str) -> io::Result<()> {
         let mut out = io::stdout();
         erase_lines(&mut out, self.drawn_lines)?;
-        clear_line()?;
+        clear_line(&mut out)?;
         writeln!(out, "{}", summary)?;
         self.drawn_lines = 0;
         out.flush()
@@ -172,7 +177,7 @@ impl BuildState {
     fn finish_with_output(&mut self, header: &str) -> io::Result<()> {
         let mut out = io::stdout();
         erase_lines(&mut out, self.drawn_lines)?;
-        clear_line()?;
+        clear_line(&mut out)?;
         writeln!(out, "{}", header)?;
         for line in &self.lines {
             writeln!(out, "  {} {}", "│".dimmed(), line)?;
@@ -234,12 +239,12 @@ impl KocaCreateUi {
     fn redraw_download(&mut self) -> io::Result<()> {
         let total = self.dl_total_bytes;
         let pct = if total > 0 {
-            (self.dl_bytes_done as f64 / total as f64 * 100.0) as u32
+            ((self.dl_bytes_done as f64 / total as f64 * 100.0) as u32).min(100)
         } else {
-            self.dl_percent.unwrap_or(0)
+            self.dl_percent.unwrap_or(0).min(100)
         };
         let bar_width = 30usize;
-        let filled = (bar_width as f64 * pct as f64 / 100.0) as usize;
+        let filled = ((bar_width as f64 * pct as f64 / 100.0) as usize).min(bar_width);
         let spinner = SPINNERS[self.tick % SPINNERS.len()];
         let mut out = io::stdout();
 
@@ -247,7 +252,7 @@ impl KocaCreateUi {
             execute!(out, cursor::MoveUp(self.dl_lines_drawn))?;
         }
 
-        clear_line()?;
+        clear_line(&mut out)?;
         if total > 0 {
             writeln!(
                 out,
@@ -270,9 +275,13 @@ impl KocaCreateUi {
             )?;
         }
 
-        clear_line()?;
+        clear_line(&mut out)?;
         if !self.dl_active.is_empty() {
-            let label = if self.dl_active.len() == 1 { "download" } else { "downloads" };
+            let label = if self.dl_active.len() == 1 {
+                "download"
+            } else {
+                "downloads"
+            };
             writeln!(
                 out,
                 "{} active ({} {}): {}",
@@ -305,8 +314,13 @@ impl KocaCreateUi {
             execute!(out, cursor::MoveUp(self.resolve_lines_drawn))?;
         }
         let spinner = SPINNERS[self.tick % SPINNERS.len()];
-        clear_line()?;
-        writeln!(out, "{} {}", spinner.blue(), "Resolving dependencies...".bold())?;
+        clear_line(&mut out)?;
+        writeln!(
+            out,
+            "{} {}",
+            spinner.blue(),
+            "Resolving dependencies...".bold()
+        )?;
         self.resolve_lines_drawn = 1;
         out.flush()
     }
@@ -317,7 +331,11 @@ impl KocaCreateUi {
             execute!(out, cursor::MoveUp(self.inst_lines_drawn))?;
         }
 
-        let label = if self.inst_is_remove { "Removing" } else { "Installing" };
+        let label = if self.inst_is_remove {
+            "Removing"
+        } else {
+            "Installing"
+        };
         let spinner = SPINNERS[self.tick % SPINNERS.len()];
         let width = terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
 
@@ -335,7 +353,7 @@ impl KocaCreateUi {
 
         let done_display = self.inst_done.min(self.inst_total);
 
-        clear_line()?;
+        clear_line(&mut out)?;
         writeln!(
             out,
             "{} {}/{} packages {}{} {}%",
@@ -347,13 +365,17 @@ impl KocaCreateUi {
             pct,
         )?;
 
-        clear_line()?;
+        clear_line(&mut out)?;
         if !self.inst_active.is_empty() {
             let prefix = format!("{} ", spinner);
             let avail = width.saturating_sub(prefix.len());
             let pkgs = self.inst_active.join(", ");
             let display = if pkgs.len() > avail && avail > 3 {
-                format!("{}...", &pkgs[..avail - 3])
+                let trunc = match pkgs.char_indices().nth(avail - 3) {
+                    Some((idx, _)) => &pkgs[..idx],
+                    None => &pkgs,
+                };
+                format!("{trunc}...")
             } else {
                 pkgs
             };
@@ -368,9 +390,17 @@ impl KocaCreateUi {
     fn finish_install_ui(&mut self) -> io::Result<()> {
         let mut out = io::stdout();
         erase_lines(&mut out, self.inst_lines_drawn)?;
-        clear_line()?;
-        let label = if self.inst_is_remove { "Removed" } else { "Installed" };
-        let count = if self.inst_done > 0 { self.inst_done } else { self.inst_total };
+        clear_line(&mut out)?;
+        let label = if self.inst_is_remove {
+            "Removed"
+        } else {
+            "Installed"
+        };
+        let count = if self.inst_done > 0 {
+            self.inst_done
+        } else {
+            self.inst_total
+        };
         println!("{} {} package(s)", label.green(), count);
         self.inst_lines_drawn = 0;
         Ok(())
@@ -398,11 +428,26 @@ impl CreateUi for KocaCreateUi {
         noconfirm: bool,
     ) -> io::Result<bool> {
         // Group by action type.
-        let installs: Vec<&PlannedAction> = actions.iter().filter(|a| a.action == ActionKind::Install).collect();
-        let upgrades: Vec<&PlannedAction> = actions.iter().filter(|a| a.action == ActionKind::Upgrade).collect();
-        let downgrades: Vec<&PlannedAction> = actions.iter().filter(|a| a.action == ActionKind::Downgrade).collect();
-        let reinstalls: Vec<&PlannedAction> = actions.iter().filter(|a| a.action == ActionKind::Reinstall).collect();
-        let removes: Vec<&PlannedAction> = actions.iter().filter(|a| a.action == ActionKind::Remove).collect();
+        let installs: Vec<&PlannedAction> = actions
+            .iter()
+            .filter(|a| a.action == ActionKind::Install)
+            .collect();
+        let upgrades: Vec<&PlannedAction> = actions
+            .iter()
+            .filter(|a| a.action == ActionKind::Upgrade)
+            .collect();
+        let downgrades: Vec<&PlannedAction> = actions
+            .iter()
+            .filter(|a| a.action == ActionKind::Downgrade)
+            .collect();
+        let reinstalls: Vec<&PlannedAction> = actions
+            .iter()
+            .filter(|a| a.action == ActionKind::Reinstall)
+            .collect();
+        let removes: Vec<&PlannedAction> = actions
+            .iter()
+            .filter(|a| a.action == ActionKind::Remove)
+            .collect();
 
         let show_group = |label: &str, pkgs: &[&PlannedAction]| {
             if pkgs.is_empty() {
@@ -422,11 +467,21 @@ impl CreateUi for KocaCreateUi {
 
         // Summary.
         let mut summary = Vec::new();
-        if !installs.is_empty() { summary.push(format!("{} to install", installs.len())); }
-        if !upgrades.is_empty() { summary.push(format!("{} to upgrade", upgrades.len())); }
-        if !downgrades.is_empty() { summary.push(format!("{} to downgrade", downgrades.len())); }
-        if !reinstalls.is_empty() { summary.push(format!("{} to reinstall", reinstalls.len())); }
-        if !removes.is_empty() { summary.push(format!("{} to remove", removes.len())); }
+        if !installs.is_empty() {
+            summary.push(format!("{} to install", installs.len()));
+        }
+        if !upgrades.is_empty() {
+            summary.push(format!("{} to upgrade", upgrades.len()));
+        }
+        if !downgrades.is_empty() {
+            summary.push(format!("{} to downgrade", downgrades.len()));
+        }
+        if !reinstalls.is_empty() {
+            summary.push(format!("{} to reinstall", reinstalls.len()));
+        }
+        if !removes.is_empty() {
+            summary.push(format!("{} to remove", removes.len()));
+        }
         if !summary.is_empty() {
             println!("{}: {}", "Summary".bold(), summary.join(", "));
         }
@@ -453,8 +508,9 @@ impl CreateUi for KocaCreateUi {
         let input = input.trim().to_lowercase();
         let accepted = input != "n" && input != "no";
 
-        execute!(io::stdout(), cursor::MoveUp(1))?;
-        clear_line()?;
+        let mut out = io::stdout();
+        execute!(out, cursor::MoveUp(1))?;
+        clear_line(&mut out)?;
         if accepted {
             let total_packages = actions
                 .iter()
@@ -498,7 +554,7 @@ impl CreateUi for KocaCreateUi {
                 DownloadEvent::Done => {
                     let mut out = io::stdout();
                     erase_lines(&mut out, self.dl_lines_drawn)?;
-                    clear_line()?;
+                    clear_line(&mut out)?;
                     if self.dl_total_bytes > 0 {
                         println!(
                             "Downloaded {} packages ({})",
@@ -520,10 +576,7 @@ impl CreateUi for KocaCreateUi {
                     self.inst_lines_drawn = 0;
                     self.redraw_install()?;
                 }
-                InstallEvent::Action {
-                    package,
-                    ..
-                } => {
+                InstallEvent::Action { package, .. } => {
                     if !self.inst_active.iter().any(|n| n == package) {
                         self.inst_active.push(package.clone());
                         self.inst_in_progress += 1;
@@ -539,9 +592,8 @@ impl CreateUi for KocaCreateUi {
                     self.redraw_install()?;
                 }
                 InstallEvent::Hook { name, .. } => {
-                    if !self.inst_active.iter().any(|n| n == name) {
-                        self.inst_active.push(name.clone());
-                    }
+                    self.inst_active.clear();
+                    self.inst_active.push(name.clone());
                     self.redraw_install()?;
                 }
                 InstallEvent::Done => {
@@ -558,10 +610,7 @@ impl CreateUi for KocaCreateUi {
                     self.inst_lines_drawn = 0;
                     self.redraw_install()?;
                 }
-                RemoveEvent::Action {
-                    package,
-                    ..
-                } => {
+                RemoveEvent::Action { package, .. } => {
                     if !self.inst_active.iter().any(|n| n == package) {
                         self.inst_active.push(package.clone());
                         self.inst_in_progress += 1;
@@ -623,8 +672,12 @@ impl CreateUi for KocaCreateUi {
     }
 
     fn finish_build(&mut self, pkgname: &str, version: &str) -> io::Result<()> {
-        self.build_state
-            .finish(&format!("{} {} {}", "Built".green(), pkgname.bold(), version.dimmed()))
+        self.build_state.finish(&format!(
+            "{} {} {}",
+            "Built".green(),
+            pkgname.bold(),
+            version.dimmed()
+        ))
     }
 
     fn start_package(&mut self) -> io::Result<()> {
@@ -638,16 +691,27 @@ impl CreateUi for KocaCreateUi {
     }
 
     fn finish_package(&mut self, output_file: &str) -> io::Result<()> {
-        self.pkg_state
-            .finish(&format!("{} {}", "Package created:".green(), output_file.bold()))
+        self.pkg_state.finish(&format!(
+            "{} {}",
+            "Package created:".green(),
+            output_file.bold()
+        ))
     }
 
     fn show_failure(&mut self, phase_name: &str) -> io::Result<()> {
         if self.build_state.drawn_lines > 0 {
-            self.build_state.finish_with_output(&format!("{} {}", phase_name.red(), "failed".red()))?;
+            self.build_state.finish_with_output(&format!(
+                "{} {}",
+                phase_name.red(),
+                "failed".red()
+            ))?;
         }
         if self.pkg_state.drawn_lines > 0 {
-            self.pkg_state.finish_with_output(&format!("{} {}", phase_name.red(), "failed".red()))?;
+            self.pkg_state.finish_with_output(&format!(
+                "{} {}",
+                phase_name.red(),
+                "failed".red()
+            ))?;
         }
         Ok(())
     }

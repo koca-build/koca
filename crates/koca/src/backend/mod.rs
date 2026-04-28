@@ -11,9 +11,8 @@ use crate::{KocaError, KocaResult};
 pub use error::ProtoError;
 pub use transport::{socket_name, BackendSession, KocaSession};
 pub use types::{
-    ActionKind, Command, DownloadEvent, ErrorCode, Event, InstallEvent,
-    InstalledStatus, Message, MessageBody, PackageStatus, PlannedAction, ProtocolError,
-    RemoveEvent, Request, ResultPayload,
+    ActionKind, Command, DownloadEvent, ErrorCode, Event, InstallEvent, InstalledStatus, Message,
+    MessageBody, PackageStatus, PlannedAction, ProtocolError, RemoveEvent, Request, ResultPayload,
 };
 
 // ── BackendKind ──────────────────────────────────────────────────────────
@@ -108,27 +107,25 @@ pub async fn run_backend_loop(socket: &str, kind: BackendKind) -> anyhow::Result
                 session.send(&Message { id, body }).await?;
             }
 
-            Command::InstallPlan { packages } => {
-                match dispatch_install_plan(kind, &packages) {
-                    Ok((result, pkg_names)) => {
-                        pending = Some(pkg_names);
-                        session
-                            .send(&Message {
-                                id,
-                                body: MessageBody::Result { result },
-                            })
-                            .await?;
-                    }
-                    Err(e) => {
-                        session
-                            .send(&Message {
-                                id,
-                                body: MessageBody::Error { error: e },
-                            })
-                            .await?;
-                    }
+            Command::InstallPlan { packages } => match dispatch_install_plan(kind, &packages) {
+                Ok((result, pkg_names)) => {
+                    pending = Some(pkg_names);
+                    session
+                        .send(&Message {
+                            id,
+                            body: MessageBody::Result { result },
+                        })
+                        .await?;
                 }
-            }
+                Err(e) => {
+                    session
+                        .send(&Message {
+                            id,
+                            body: MessageBody::Error { error: e },
+                        })
+                        .await?;
+                }
+            },
 
             Command::Install { packages } => {
                 dispatch_commit(kind, id, packages, false, &mut session).await;
