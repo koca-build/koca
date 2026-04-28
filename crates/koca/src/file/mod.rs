@@ -7,7 +7,6 @@ pub use arch::Arch;
 use brush::{CreateOptions, Shell, ShellVariable};
 use brush_parser::{ast::FunctionDefinition, word::WordPiece};
 use itertools::Itertools;
-use nix::unistd::{Gid, Group, Uid, User};
 use parser::DeclValue;
 use std::{
     collections::HashMap,
@@ -711,32 +710,19 @@ impl BuildFile {
                 .strip_prefix(&pkg_dir)
                 .expect("pkgdir strip should always succeed");
 
-            // Stat via libc (fakeroot-aware) to get the tracked owner/group.
             let metadata = entry
                 .metadata()
                 .expect("file metadata should always be readable");
-            let uid = metadata.uid();
-            let gid = metadata.gid();
             let mode = metadata.mode() & 0o7777;
 
-            let owner = User::from_uid(Uid::from_raw(uid))
-                .ok()
-                .flatten()
-                .map(|u| u.name)
-                .unwrap_or_else(|| uid.to_string());
-            let group = Group::from_gid(Gid::from_raw(gid))
-                .ok()
-                .flatten()
-                .map(|g| g.name)
-                .unwrap_or_else(|| gid.to_string());
-
             let file = File::open(&src_path)?;
-            pkg.add_file_with_ownership(
+            pkg.add_file_with(
                 format!("/{}", dst_path.display()),
                 file,
-                mode,
-                owner,
-                group,
+                rfpm::FileOptions {
+                    mode,
+                    ..Default::default()
+                },
             );
         }
 
