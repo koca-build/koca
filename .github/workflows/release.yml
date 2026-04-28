@@ -59,22 +59,3 @@ jobs:
           git add npm/cli/package.json koca.koca
           git commit -m "chore: update non-cargo versions to $VERSION"
           git push origin "$HEAD_BRANCH"
-
-  # Detects merged release PRs and creates git tags + GitHub releases.
-  # Does NOT publish to any registry — all publishing is tag-triggered
-  # via separate release-* workflows.
-  release-tag:
-    name: Release tag
-    needs: create-release-pr
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: release-plz/action@v0.5
-        with:
-          command: release
-        env:
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
