@@ -37,64 +37,38 @@ jobs:
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
-      - uses: cargo-bins/cargo-binstall@main
-      - run: cargo binstall -y release-plz
-
-      - name: Update versions
-        id: update
-        run: |
-          set -euo pipefail
-          release-plz update
-          if git diff --quiet; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Get version
-        if: steps.update.outputs.changed == 'true'
-        id: version
-        uses: mikefarah/yq@master
+      - id: release-plz
+        uses: release-plz/action@v0.5
         with:
-          cmd: yq -oy '.workspace.package.version' Cargo.toml
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Update non-Cargo versions
-        if: steps.update.outputs.changed == 'true'
+        if: steps.release-plz.outputs.prs_created == 'true'
         env:
-          VERSION: ${{ steps.version.outputs.result }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_JSON: ${{ steps.release-plz.outputs.pr }}
         run: |
           set -euo pipefail
+
+          VERSION="$(echo "$PR_JSON" | jq -r '.releases[0].version')"
+          HEAD_BRANCH="$(echo "$PR_JSON" | jq -r '.head_branch')"
+
+          git fetch origin "$HEAD_BRANCH"
+          git checkout "$HEAD_BRANCH"
+
           jq --arg v "$VERSION" '.version = $v' npm/cli/package.json > npm/cli/package.json.tmp
           mv npm/cli/package.json.tmp npm/cli/package.json
           sed -i "s/^pkgver=.*$/pkgver=$VERSION/" koca.koca
 
-      - name: Create release PR
-        if: steps.update.outputs.changed == 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.version.outputs.result }}
-        run: |
-          set -euo pipefail
-          BRANCH="release-plz/v${VERSION}"
+          if git diff --quiet; then
+            exit 0
+          fi
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$BRANCH"
-          git add Cargo.toml Cargo.lock crates/*/Cargo.toml npm/cli/package.json koca.koca
-          git add CHANGELOG.md 2>/dev/null || true
-          git commit -m "chore: release v${VERSION}"
-          git push -f origin "$BRANCH"
-
-          export CHANGELOG=""
-          if [[ -f CHANGELOG.md ]]; then
-            CHANGELOG="$(awk '/^## \[/{if(found) exit; found=1} found' CHANGELOG.md)"
-          fi
-          export VERSION
-          BODY="$(envsubst '$VERSION $CHANGELOG' < .github/release-pr-body.md)"
-
-          EXISTING="$(gh pr list --head "$BRANCH" --json number --jq '.[0].number')"
-          if [[ -n "$EXISTING" ]]; then
-            echo "PR #${EXISTING} already exists, updated branch."
-          else
-            gh pr create --title "chore: release v${VERSION}" --body "$BODY"
-          fi
+          git add npm/cli/package.json koca.koca
+          git commit -m "chore: update non-cargo versions to $VERSION"
+          git push origin "$HEAD_BRANCH"
