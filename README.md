@@ -57,13 +57,6 @@ curl -fsSL https://go.koca.dev/install | bash
 #### GitHub Releases
 You can also download the latest pre-built binaries for your platform from the [GitHub releases](https://github.com/koca-build/koca/releases/) page.
 
-#### Via Cargo
-If you have Rust and Cargo installed, you can build and install Koca from source:
-
-```bash
-cargo install koca-cli
-```
-
 #### Via Docker
 You can also run Koca as a Docker container:
 
@@ -85,4 +78,4 @@ koca create your-app.koca --output-type rpm
 
 ## License
 
-Koca is released under the [FSL-1.1-MIT](LICENSE) license.
+Koca is released under the [MIT](LICENSE) license.
