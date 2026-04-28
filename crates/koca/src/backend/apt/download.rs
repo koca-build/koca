@@ -156,20 +156,31 @@ pub(crate) fn get_download_items(packages: &[String]) -> Result<Vec<DownloadItem
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(ProtocolError { code: ErrorCode::Internal, message: stderr.trim().to_string() });
     }
-    let fallback = query_archive_info(packages)?;
     let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout.lines().try_fold(Vec::new(), |mut items, line| {
+    let mut items = Vec::new();
+    let mut needs_fallback = false;
+    for line in stdout.lines() {
         if let Some(item) = parse_print_uris_line(line, packages)? {
-            let item = if item.hash_value.is_empty() {
-                let info = fallback.get(&item.filename).ok_or_else(|| ProtocolError { code: ErrorCode::Internal, message: format!("missing fallback metadata for {}", item.filename) })?;
-                DownloadItem { size: if item.size == 0 { info.size } else { item.size }, hash_value: info.sha256.clone(), ..item }
-            } else {
-                item
-            };
+            if item.hash_value.is_empty() {
+                needs_fallback = true;
+            }
             items.push(item);
         }
-        Ok(items)
-    })
+    }
+    if needs_fallback {
+        let fallback = query_archive_info(packages)?;
+        for item in &mut items {
+            if item.hash_value.is_empty() {
+                if let Some(info) = fallback.get(&item.filename) {
+                    if item.size == 0 { item.size = info.size; }
+                    item.hash_value = info.sha256.clone();
+                } else {
+                    return Err(ProtocolError { code: ErrorCode::Internal, message: format!("missing fallback metadata for {}", item.filename) });
+                }
+            }
+        }
+    }
+    Ok(items)
 }
 
 fn ensure_cache_dirs() -> Result<(), ProtocolError> {

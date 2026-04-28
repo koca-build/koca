@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -49,7 +49,7 @@ struct SyncPkg {
     isize: u64,
 }
 
-fn read_sync_pkgs(names: &[String]) -> HashMap<String, SyncPkg> {
+fn read_sync_pkgs(names: &HashSet<String>) -> HashMap<String, SyncPkg> {
     let mut result = HashMap::new();
     let sync = Path::new(SYNC_DB);
     let dbs = match std::fs::read_dir(sync) {
@@ -312,7 +312,7 @@ pub fn install_plan(packages: &[String]) -> Result<(ResultPayload, Vec<String>),
         })
         .collect();
 
-    let names: Vec<String> = targets.iter().map(|(n, _, _)| n.clone()).collect();
+    let names: HashSet<String> = targets.iter().map(|(n, _, _)| n.clone()).collect();
     let sync_pkgs = read_sync_pkgs(&names);
 
     let actions: Vec<PlannedAction> = targets
@@ -325,7 +325,7 @@ pub fn install_plan(packages: &[String]) -> Result<(ResultPayload, Vec<String>),
                 Some(ref l) if l.version == *version => {
                     (ActionKind::Reinstall, Some(l.version.clone()))
                 }
-                Some(ref l) if l.version.as_str() < version.as_str() => {
+                Some(ref l) if libversion::version_compare2(&l.version, version) == std::cmp::Ordering::Less => {
                     (ActionKind::Upgrade, Some(l.version.clone()))
                 }
                 Some(l) => (ActionKind::Downgrade, Some(l.version)),
@@ -351,7 +351,7 @@ pub fn install_plan(packages: &[String]) -> Result<(ResultPayload, Vec<String>),
             total_download,
             total_install,
         },
-        names,
+        names.into_iter().collect(),
     ))
 }
 
@@ -408,7 +408,7 @@ fn get_download_urls(packages: &[String]) -> Result<Vec<DownloadItem>, ProtocolE
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut items = Vec::new();
-    let mut all_names = Vec::new();
+    let mut all_names = HashSet::new();
     for line in stdout.lines() {
         let url = line.trim().to_string();
         if url.is_empty() {
@@ -416,7 +416,7 @@ fn get_download_urls(packages: &[String]) -> Result<Vec<DownloadItem>, ProtocolE
         }
         let filename = url.rsplit('/').next().unwrap_or("").to_string();
         let package = package_name_from_filename(&filename);
-        all_names.push(package.clone());
+        all_names.insert(package.clone());
         items.push(DownloadItem {
             package,
             url,

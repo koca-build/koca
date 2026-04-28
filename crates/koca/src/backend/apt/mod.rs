@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
-use std::os::unix::io::{AsRawFd, FromRawFd};
+use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
 use std::process::Stdio;
 
 mod download;
@@ -243,8 +243,7 @@ fn run_apt_with_status(pkgs: &[String], is_remove: bool, n_pkgs: u32, event_tx: 
     let child = std::process::Command::new("apt-get").args(&args).env("LC_ALL", "C").env("DEBIAN_FRONTEND", "noninteractive").stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| ProtocolError { code: ErrorCode::Internal, message: format!("failed to spawn apt-get: {e}") })?;
     drop(status_write);
     let fd_tx = event_tx.clone();
-    let status_reader = unsafe { std::fs::File::from_raw_fd(status_read.as_raw_fd()) };
-    std::mem::forget(status_read);
+    let status_reader = unsafe { std::fs::File::from_raw_fd(status_read.into_raw_fd()) };
     let fd_handle = std::thread::spawn(move || {
         let mut state = AptStatusState { current: 0, seen: std::collections::HashSet::new() };
         for line in BufReader::new(status_reader).lines().map_while(Result::ok) {
@@ -284,19 +283,9 @@ pub async fn commit_transaction(msg_id: u64, packages: Vec<String>, is_remove: b
             let _ = event_tx.send(ProtoEvent::Remove { inner: ProtoRemoveEvent::Done });
             return result.unwrap_or_else(|_| Err(ProtocolError { code: ErrorCode::Internal, message: "remove task panicked".into() }));
         }
-        // Resolve the full dep count via dry-run before downloading.
-        let resolved_count = {
-            let p = pkgs.clone();
-            tokio::task::spawn_blocking(move || {
-                let mut args: Vec<&str> = vec!["install", "-s", "-y"];
-                args.extend(p.iter().map(|s| s.as_str()));
-                let output = run_cmd("apt-get", &args)?;
-                Ok::<u32, ProtocolError>(parse_inst_lines(&String::from_utf8_lossy(&output.stdout)).len() as u32)
-            }).await.unwrap_or(Ok(0)).unwrap_or(0)
-        };
         let items = tokio::task::spawn_blocking({ let pkgs = pkgs.clone(); move || get_download_items(&pkgs) }).await.unwrap_or_else(|_| Err(ProtocolError { code: ErrorCode::Internal, message: "download URL task panicked".into() }))?;
+        let install_count = items.len() as u32;
         download_packages(&items, &event_tx).await?;
-        let install_count = if resolved_count > 0 { resolved_count } else { items.len() as u32 };
         let _ = event_tx.send(ProtoEvent::Install { inner: ProtoInstallEvent::Start { total_packages: install_count } });
         let tx = event_tx.clone();
         let result = tokio::task::spawn_blocking(move || run_apt_with_status(&pkgs, false, install_count, &tx)).await;

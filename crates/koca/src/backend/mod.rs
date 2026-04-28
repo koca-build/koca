@@ -11,7 +11,7 @@ use crate::{KocaError, KocaResult};
 pub use error::ProtoError;
 pub use transport::{socket_name, BackendSession, KocaSession};
 pub use types::{
-    ActionKind, BackendArgs, Command, DownloadEvent, ErrorCode, Event, InstallEvent,
+    ActionKind, Command, DownloadEvent, ErrorCode, Event, InstallEvent,
     InstalledStatus, Message, MessageBody, PackageStatus, PlannedAction, ProtocolError,
     RemoveEvent, Request, ResultPayload,
 };

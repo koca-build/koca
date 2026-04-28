@@ -16,6 +16,19 @@ fn clear_line() -> io::Result<()> {
     )
 }
 
+/// Move cursor up N lines, clear each, then move back up. Erases a drawn block.
+fn erase_lines(out: &mut impl Write, count: u16) -> io::Result<()> {
+    if count == 0 {
+        return Ok(());
+    }
+    execute!(out, cursor::MoveUp(count))?;
+    for _ in 0..count {
+        clear_line()?;
+        writeln!(out)?;
+    }
+    execute!(out, cursor::MoveUp(count))
+}
+
 fn format_bytes(b: u64) -> String {
     if b >= 1_000_000_000 {
         format!("{:.1} GB", b as f64 / 1_000_000_000.0)
@@ -29,13 +42,6 @@ fn format_bytes(b: u64) -> String {
 }
 
 // ── Column layout (à la `apt` Output-Version >= 30) ─────────────────────
-
-/// Display a list of colored strings in columns, like `ls` / apt's ShowWithColumns.
-/// `plain` is used for width calculations, `colored` for actual display.
-/// Column-major order, 2-space indent, 2-space gap between columns.
-fn show_with_columns_colored(plain: &[String], colored: &[String], indent: usize) {
-    show_with_columns_inner(plain, Some(colored), indent);
-}
 
 fn show_with_columns_inner(items: &[String], colored: Option<&[String]>, indent: usize) {
     if items.is_empty() {
@@ -139,10 +145,10 @@ impl BuildState {
         let start = self.lines.len().saturating_sub(BUILD_GUTTER_MAX);
         let visible = &self.lines[start..];
         let mut drawn: u16 = 1;
+        let width = terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
 
         for line in visible {
             clear_line()?;
-            let width = terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
             let avail = width.saturating_sub(4); // "  │ " prefix
             let truncated = if line.len() > avail { &line[..avail] } else { line.as_str() };
             writeln!(out, "  {} {}", "│".dimmed(), truncated.dimmed())?;
@@ -155,14 +161,7 @@ impl BuildState {
 
     fn finish(&mut self, summary: &str) -> io::Result<()> {
         let mut out = io::stdout();
-        if self.drawn_lines > 0 {
-            execute!(out, cursor::MoveUp(self.drawn_lines))?;
-            for _ in 0..self.drawn_lines {
-                clear_line()?;
-                writeln!(out)?;
-            }
-            execute!(out, cursor::MoveUp(self.drawn_lines))?;
-        }
+        erase_lines(&mut out, self.drawn_lines)?;
         clear_line()?;
         writeln!(out, "{}", summary)?;
         self.drawn_lines = 0;
@@ -172,14 +171,7 @@ impl BuildState {
     /// On failure: clear the gutter, then dump all captured output.
     fn finish_with_output(&mut self, header: &str) -> io::Result<()> {
         let mut out = io::stdout();
-        if self.drawn_lines > 0 {
-            execute!(out, cursor::MoveUp(self.drawn_lines))?;
-            for _ in 0..self.drawn_lines {
-                clear_line()?;
-                writeln!(out)?;
-            }
-            execute!(out, cursor::MoveUp(self.drawn_lines))?;
-        }
+        erase_lines(&mut out, self.drawn_lines)?;
         clear_line()?;
         writeln!(out, "{}", header)?;
         for line in &self.lines {
@@ -375,14 +367,7 @@ impl KocaCreateUi {
 
     fn finish_install_ui(&mut self) -> io::Result<()> {
         let mut out = io::stdout();
-        if self.inst_lines_drawn > 0 {
-            execute!(out, cursor::MoveUp(self.inst_lines_drawn))?;
-            for _ in 0..self.inst_lines_drawn {
-                clear_line()?;
-                writeln!(out)?;
-            }
-            execute!(out, cursor::MoveUp(self.inst_lines_drawn))?;
-        }
+        erase_lines(&mut out, self.inst_lines_drawn)?;
         clear_line()?;
         let label = if self.inst_is_remove { "Removed" } else { "Installed" };
         let count = if self.inst_done > 0 { self.inst_done } else { self.inst_total };
@@ -400,16 +385,9 @@ impl CreateUi for KocaCreateUi {
 
     fn finish_resolve(&mut self) -> io::Result<()> {
         self.resolving = false;
-        if self.resolve_lines_drawn > 0 {
-            let mut out = io::stdout();
-            execute!(out, cursor::MoveUp(self.resolve_lines_drawn))?;
-            for _ in 0..self.resolve_lines_drawn {
-                clear_line()?;
-                writeln!(out)?;
-            }
-            execute!(out, cursor::MoveUp(self.resolve_lines_drawn))?;
-            self.resolve_lines_drawn = 0;
-        }
+        let mut out = io::stdout();
+        erase_lines(&mut out, self.resolve_lines_drawn)?;
+        self.resolve_lines_drawn = 0;
         Ok(())
     }
 
@@ -518,15 +496,8 @@ impl CreateUi for KocaCreateUi {
                     self.redraw_download()?;
                 }
                 DownloadEvent::Done => {
-                    if self.dl_lines_drawn > 0 {
-                        let mut out = io::stdout();
-                        execute!(out, cursor::MoveUp(self.dl_lines_drawn))?;
-                        for _ in 0..self.dl_lines_drawn {
-                            clear_line()?;
-                            writeln!(out)?;
-                        }
-                        execute!(out, cursor::MoveUp(self.dl_lines_drawn))?;
-                    }
+                    let mut out = io::stdout();
+                    erase_lines(&mut out, self.dl_lines_drawn)?;
                     clear_line()?;
                     if self.dl_total_bytes > 0 {
                         println!(
