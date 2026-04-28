@@ -132,7 +132,7 @@ main() {
     binary)
       info "method   binary"
       local bin_file="${tmpdir}/koca"
-      download "${base_url}/koca" "$bin_file"
+      download "${base_url}/koca-${arch}" "$bin_file"
       chmod +x "$bin_file"
       info "installing to /usr/local/bin/koca..."
       sudo mv "$bin_file" /usr/local/bin/koca
