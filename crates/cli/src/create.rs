@@ -39,7 +39,12 @@ pub async fn run(args: CreateArgs) -> CliMultiResult<()> {
 }
 
 async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<()> {
-    let mut build_file = BuildFile::parse_file(&args.build_file)
+    let build_file_path = match &args.build_file {
+        Some(p) => p.clone(),
+        None => crate::discover::find_build_file()?,
+    };
+
+    let mut build_file = BuildFile::parse_file(&build_file_path)
         .await
         .map_err(|errs| {
             CliMultiError(errs.into_iter().map(|err| CliError::Koca { err }).collect())
@@ -211,7 +216,7 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
         .arg(&exe)
         .arg("internal")
         .arg("package")
-        .arg(&args.build_file)
+        .arg(&build_file_path)
         .arg("--output-type")
         .arg(output_type_str)
         .stdout(std::process::Stdio::piped())
@@ -261,7 +266,10 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
     let mut output_files = Vec::new();
     for name in build_file.pkgnames() {
         for fmt in args.output_type.bundle_formats() {
-            output_files.push(format!("./{}", fmt.output_filename(name, &version, &arch)));
+            output_files.push(format!(
+                "koca-out/{}",
+                fmt.output_filename(name, &version, &arch)
+            ));
         }
     }
 

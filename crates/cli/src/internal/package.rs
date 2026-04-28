@@ -25,6 +25,8 @@ pub async fn run(args: PackageArgs) -> CliMultiResult<()> {
         args.package.clone()
     };
 
+    std::fs::create_dir_all("koca-out").map_err(|err| CliError::Io { err })?;
+
     for pkg_name in &pkg_names {
         // Run the package function.
         let func_label = if build_file.pkgnames().len() > 1 {
@@ -50,17 +52,15 @@ pub async fn run(args: PackageArgs) -> CliMultiResult<()> {
             let arch = build_file.arch()[0].clone();
             let file_name =
                 bundle_format.output_filename(pkg_name, &build_file.version().to_string(), &arch);
+            let out_path = Path::new("koca-out").join(&file_name);
 
             zolt::infoln!(
                 "Creating package into {}{}...",
-                "./".blue().bold(),
+                "koca-out/".blue().bold(),
                 file_name.blue().bold()
             );
 
-            if let Err(err) = build_file
-                .bundle(pkg_name, bundle_format, Path::new(&file_name))
-                .await
-            {
+            if let Err(err) = build_file.bundle(pkg_name, bundle_format, &out_path).await {
                 return Err(CliError::Koca { err }.into());
             }
         }
