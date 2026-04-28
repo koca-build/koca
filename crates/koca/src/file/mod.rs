@@ -834,10 +834,10 @@ pub mod funcs {
 /// The directories used by Koca.
 mod dirs {
     /// The directory where Koca stores source files.
-    pub const SRC: &str = "koca/src";
+    pub const SRC: &str = "koca-build/src";
 
     /// Return the package directory for a named sub-package.
     pub fn pkg_for(name: &str) -> String {
-        format!("koca/pkg/{name}")
+        format!("koca-build/pkg/{name}")
     }
 }
