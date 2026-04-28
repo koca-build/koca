@@ -648,7 +648,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cli"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2049,7 +2049,7 @@ dependencies = [
 
 [[package]]
 name = "koca"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "brush-builtins",
