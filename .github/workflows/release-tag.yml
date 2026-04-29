@@ -1,7 +1,7 @@
 name: Release Tag
 
 # Detects merged release PRs and creates git tags + draft GitHub releases,
-# builds multi-arch binaries, then publishes the release with assets attached.
+# builds multi-arch binaries and deb/rpm packages, then publishes the release.
 
 on:
   push:
@@ -43,33 +43,37 @@ jobs:
       matrix:
         include:
           - os: ubuntu-24.04
-            target: x86_64-unknown-linux-musl
             arch: x86_64
           - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-musl
             arch: aarch64
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Install musl toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools
-
       - uses: Swatinem/rust-cache@v2
         with:
-          key: release-${{ matrix.target }}
+          key: release-${{ matrix.arch }}
 
-      - name: Build static binary
-        run: cargo build --locked --release --target ${{ matrix.target }} --bin koca
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools fakeroot
+
+      - name: Build packages
+        run: cargo run --locked --bin koca -- create koca.koca --output-type all --noconfirm
+
+      - name: Collect binary
+        run: cp "koca-build/src/koca/target/$(uname -m)-unknown-linux-musl/release/koca" "koca-${{ matrix.arch }}"
 
       - uses: actions/upload-artifact@v4
         with:
           name: binary-${{ matrix.arch }}
-          path: target/${{ matrix.target }}/release/koca
+          path: koca-${{ matrix.arch }}
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.arch }}
+          path: koca-out/*
           if-no-files-found: error
 
   publish-release:
@@ -82,6 +86,10 @@ jobs:
         with:
           pattern: binary-*
 
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: packages-*
+
       - name: Upload assets and publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -91,7 +99,7 @@ jobs:
           set -euo pipefail
           for dir in binary-*; do
             arch="${dir#binary-}"
-            mv "$dir/koca" "koca-${arch}"
+            mv "$dir/koca-${arch}" "koca-${arch}"
           done
-          gh release upload "$TAG" koca-*
+          gh release upload "$TAG" koca-* packages-*/*
           gh release edit "$TAG" --draft=false
