@@ -15,10 +15,13 @@ build() {
     fi
 
     cd "${pkgname}/"
-    cargo build --release --bin koca
+    target="$(uname -m)-unknown-linux-musl"
+    rustup target add "${target}"
+    cargo build --release --locked --target "${target}" --bin koca
 }
 
 package() {
     cd "${pkgname}/"
-    install -Dm 755 "target/release/koca" "${pkgdir}/usr/bin/koca"
+    target="$(uname -m)-unknown-linux-musl"
+    install -Dm 755 "target/${target}/release/koca" "${pkgdir}/usr/bin/koca"
 }
