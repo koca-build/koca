@@ -22,17 +22,11 @@ pkgname=claude-code
 pkgver=2.1.50
 pkgrel=1
 pkgdesc='Terminal-based AI coding assistant'
-arch=('x86_64')
-
-build() {
-    # Download the pre-built Claude Code binary, using the version we defined above with Bash variable syntax
-    curl -L "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/${pkgver}/linux-x64/claude" -o claude
-    chmod +x claude
-}
+arch=('x64')
+source=("https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/${pkgver}/linux-x64/claude")
 
 package() {
-    # Koca provides the $pkgdir environment variable to stage your package
-    install -Dm 755 "claude" "${pkgdir}/usr/bin/claude"
+    install -Dm 755 "${srcdir}/claude" "${pkgdir}/usr/bin/claude"
 }
 ```
 

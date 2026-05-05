@@ -69,4 +69,7 @@ pub enum KocaError {
     /// An invalid dependency constraint string.
     #[error("invalid dependency constraint: '{0}'")]
     InvalidDep(String),
+    /// An invalid source entry.
+    #[error("invalid source: {0}")]
+    InvalidSource(String),
 }

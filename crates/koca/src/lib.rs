@@ -9,5 +9,6 @@ pub mod distro;
 mod error;
 mod file;
 pub mod resolve;
+pub mod source;
 pub use error::*;
 pub use file::*;

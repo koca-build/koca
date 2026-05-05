@@ -5,7 +5,10 @@ mod version;
 use crate::{KocaError, KocaMultiResult, KocaParserError, KocaResult};
 pub use arch::Arch;
 use brush::{CreateOptions, Shell, ShellVariable};
-use brush_parser::{ast::FunctionDefinition, word::WordPiece};
+use brush_parser::{
+    ast::FunctionDefinition,
+    word::{Parameter, ParameterExpr, WordPiece},
+};
 use itertools::Itertools;
 use parser::DeclValue;
 use std::{
@@ -22,6 +25,7 @@ pub use version::{PkgVersion, Version};
 use walkdir::WalkDir;
 
 /// The output bundle format.
+#[derive(Clone, Copy)]
 pub enum BundleFormat {
     /// A `.deb` package.
     Deb,
@@ -132,8 +136,10 @@ pub struct BuildFile {
     var_depends: Vec<crate::dep::DepConstraint>,
     /// The package's build-time dependencies (repology project names + optional version constraints).
     var_makedepends: Vec<crate::dep::DepConstraint>,
-    /// The package's `build` function.
-    build_func: FunctionDefinition,
+    /// The package's source entries, keyed by arch (None = base `source=()`).
+    var_source: HashMap<Option<Arch>, Vec<crate::source::Source>>,
+    /// The package's `build` function (optional).
+    build_func: Option<FunctionDefinition>,
     /// Package functions keyed by package name.
     /// Single: one entry. Split: one per pkgname element.
     package_funcs: Vec<(String, FunctionDefinition)>,
@@ -216,6 +222,85 @@ impl BuildFile {
         Ok(result)
     }
 
+    /// Expand a single WordPiece, resolving simple variable references from `vars`.
+    /// Rejects command substitution, arithmetic, etc.
+    fn expand_piece(
+        var_name: &str,
+        piece: WordPiece,
+        vars: &HashMap<String, String>,
+    ) -> KocaResult<String> {
+        let expansion_err = || KocaParserError::InvalidExpansion(var_name.to_string());
+
+        match piece {
+            WordPiece::Text(text) => Ok(text),
+            WordPiece::SingleQuotedText(text) => Ok(text),
+            WordPiece::AnsiCQuotedText(text) => Ok(text),
+            WordPiece::EscapeSequence(s) => Ok(s),
+            WordPiece::ParameterExpansion(ParameterExpr::Parameter {
+                parameter: Parameter::Named(name),
+                indirect: false,
+            }) => vars
+                .get(&name)
+                .cloned()
+                .ok_or_else(|| {
+                    KocaError::InvalidSource(format!(
+                        "undefined variable '${name}' in '{var_name}'"
+                    ))
+                }),
+            WordPiece::DoubleQuotedSequence(seq) => {
+                let mut out = String::new();
+                for item in seq {
+                    out.push_str(&Self::expand_piece(var_name, item.piece, vars)?);
+                }
+                Ok(out)
+            }
+            WordPiece::CommandSubstitution(_)
+            | WordPiece::BackquotedCommandSubstitution(_)
+            | WordPiece::ArithmeticExpression(_) => Err(expansion_err().into()),
+            _ => Err(expansion_err().into()),
+        }
+    }
+
+    /// Like `parse_string_array` but resolves `$var`/`${var}` from `vars`.
+    fn expand_string_array(
+        var_name: &str,
+        value: &DeclValue,
+        vars: &HashMap<String, String>,
+    ) -> KocaMultiResult<Vec<String>> {
+        let mut errs = vec![];
+        let mut result = vec![];
+
+        for string_value in value
+            .as_array()
+            .ok_or(vec![KocaParserError::NotArray(var_name.to_string()).into()])?
+            .iter()
+            .map(|word| &word.value)
+        {
+            let pieces = brush_parser::word::parse(string_value, &Default::default()).unwrap();
+            // May have multiple pieces (e.g. "text${var}text"), concatenate them all.
+            let mut s = String::new();
+            let mut piece_err = false;
+            for piece_item in pieces {
+                match Self::expand_piece(var_name, piece_item.piece, vars) {
+                    Ok(expanded) => s.push_str(&expanded),
+                    Err(err) => {
+                        errs.push(err);
+                        piece_err = true;
+                        break;
+                    }
+                }
+            }
+            if !piece_err {
+                result.push(s);
+            }
+        }
+
+        if !errs.is_empty() {
+            return Err(errs);
+        }
+        Ok(result)
+    }
+
     /// Parse a string array into `Vec<DepConstraint>`, propagating parse errors.
     fn parse_dep_array(
         var_name: &str,
@@ -280,6 +365,7 @@ impl BuildFile {
         let mut opt_pkgdesc: Option<String> = None;
         let mut opt_depends: Vec<crate::dep::DepConstraint> = vec![];
         let mut opt_makedepends: Vec<crate::dep::DepConstraint> = vec![];
+        let mut opt_source: HashMap<Option<Arch>, Vec<crate::source::Source>> = HashMap::new();
 
         let mut opt_build_func: Option<FunctionDefinition> = None;
         let mut single_package_func: Option<FunctionDefinition> = None;
@@ -332,7 +418,65 @@ impl BuildFile {
                     Ok(makedepends) => opt_makedepends = makedepends,
                     Err(dep_errs) => errs.extend(dep_errs),
                 },
+                // source and source_* are deferred to pass 2 (need variable expansion).
+                _ if key == vars::SOURCE || key.starts_with("source_") => continue,
                 _ => continue,
+            }
+        }
+
+        // Pass 2: expand source entries with resolved static vars.
+        let mut static_vars: HashMap<String, String> = HashMap::new();
+        if let Some(v) = &opt_pkgver {
+            static_vars.insert("pkgver".into(), v.clone());
+        }
+        if let Some(v) = &opt_pkgrel {
+            static_vars.insert("pkgrel".into(), v.clone());
+        }
+        if let Some(v) = &opt_epoch {
+            static_vars.insert("epoch".into(), v.clone());
+        }
+        if let Some(v) = &opt_pkgdesc {
+            static_vars.insert("pkgdesc".into(), v.clone());
+        }
+        if let Some(v) = &opt_pkgbase {
+            static_vars.insert("pkgbase".into(), v.clone());
+        }
+        if let Some(name) = &opt_pkgname_single {
+            static_vars.insert("pkgname".into(), name.clone());
+        } else if let Some(names) = &opt_pkgname_array {
+            if let Some(first) = names.first() {
+                static_vars.insert("pkgname".into(), first.clone());
+            }
+        }
+
+        for (key, value) in &decl_items.vars {
+            if key != vars::SOURCE && !key.starts_with("source_") {
+                continue;
+            }
+            let arch_key = if key == vars::SOURCE {
+                None
+            } else {
+                let suffix = &key["source_".len()..];
+                match Arch::from_str(suffix) {
+                    Ok(a) => Some(a),
+                    Err(e) => {
+                        errs.push(e);
+                        continue;
+                    }
+                }
+            };
+            match Self::expand_string_array(key, value, &static_vars) {
+                Ok(entries) => {
+                    let mut sources = Vec::new();
+                    for entry in entries {
+                        match crate::source::Source::parse(&entry) {
+                            Ok(s) => sources.push(s),
+                            Err(e) => errs.push(e),
+                        }
+                    }
+                    opt_source.insert(arch_key, sources);
+                }
+                Err(arr_errs) => errs.extend(arr_errs),
             }
         }
 
@@ -431,10 +575,6 @@ impl BuildFile {
             opt_packages = None;
         }
 
-        // Check that build() is defined.
-        if opt_build_func.is_none() {
-            errs.push(KocaParserError::MissingRequiredFunction(funcs::BUILD.to_string()).into());
-        }
 
         // TODO: We need to handle this better so the user knows if the epoch/pkgrel itself is invalid.
         let parsed_version = if let Some(mut pkgver) = opt_pkgver {
@@ -469,7 +609,8 @@ impl BuildFile {
             var_pkgdesc: opt_pkgdesc.expect("pkgdesc should be set"),
             var_depends: opt_depends,
             var_makedepends: opt_makedepends,
-            build_func: opt_build_func.expect("build function should be set"),
+            var_source: opt_source,
+            build_func: opt_build_func,
             package_funcs,
         })
     }
@@ -523,17 +664,15 @@ impl BuildFile {
 
     /// Run `build()` with a callback. Called with `Some(line)` for output,
     /// `None` every ~80ms for tick/spinner animation.
+    ///
+    /// Panics if no `build()` function is defined — check `has_build()` first.
     pub async fn run_build_with_output(
         &mut self,
         callback: impl FnMut(Option<BuildOutputLine>),
     ) -> KocaResult<()> {
-        self.run_function_with_output(
-            KocaFunction::Build,
-            self.build_func.clone(),
-            vec![],
-            callback,
-        )
-        .await
+        let func = self.build_func.clone().expect("build() should be defined");
+        self.run_function_with_output(KocaFunction::Build, func, vec![], callback)
+            .await
     }
 
     /// Run a named `package` (or `package:NAME`) function.
@@ -589,6 +728,14 @@ impl BuildFile {
 
         self.add_vars();
         fs::create_dir_all(dirs::SRC)?;
+
+        let absolute_srcdir = path::absolute(dirs::SRC)
+            .expect("srcdir should be valid")
+            .to_string_lossy()
+            .into_owned();
+        self.shell
+            .set_env_global("srcdir", ShellVariable::new(absolute_srcdir))
+            .expect("setting environment variable shouldn't fail");
 
         for (name, value) in extra_env {
             self.shell
@@ -669,7 +816,7 @@ impl BuildFile {
     }
 
     /// Bundle the named package into the given file format.
-    pub async fn bundle(
+    pub fn bundle(
         &self,
         pkg_name: &str,
         format: BundleFormat,
@@ -775,9 +922,34 @@ impl BuildFile {
         &self.var_depends
     }
 
+    /// Whether a `build()` function is defined.
+    pub fn has_build(&self) -> bool {
+        self.build_func.is_some()
+    }
+
     /// Get the package's build-time dependency constraints.
     pub fn makedepends(&self) -> &[crate::dep::DepConstraint] {
         &self.var_makedepends
+    }
+
+    /// Get the source entries for a given target arch.
+    ///
+    /// Returns `source_$ARCH` if defined, otherwise falls back to `source`.
+    /// Returns an empty slice if neither is defined.
+    pub fn sources(&self, arch: &Arch) -> &[crate::source::Source] {
+        // Try arch-specific first by checking all suffixes for this arch.
+        for (key, sources) in &self.var_source {
+            if let Some(key_arch) = key {
+                if key_arch.get_string() == arch.get_string() {
+                    return sources;
+                }
+            }
+        }
+        // Fall back to base source=().
+        self.var_source
+            .get(&None)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 }
 
@@ -821,6 +993,7 @@ pub mod vars {
     pub const PKGDESC: &str = "pkgdesc";
     pub const DEPENDS: &str = "depends";
     pub const MAKEDEPENDS: &str = "makedepends";
+    pub const SOURCE: &str = "source";
 }
 
 /// A mapping of `const` function names to their stringified values.

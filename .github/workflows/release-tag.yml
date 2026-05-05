@@ -43,9 +43,9 @@ jobs:
       matrix:
         include:
           - os: ubuntu-24.04
-            arch: x86_64
+            arch: x64
           - os: ubuntu-24.04-arm
-            arch: aarch64
+            arch: arm64
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -62,12 +62,12 @@ jobs:
         run: cargo run --locked --bin koca -- create koca.koca --output-type all --noconfirm
 
       - name: Collect binary
-        run: cp "koca-build/src/koca/target/$(uname -m)-unknown-linux-musl/release/koca" "koca-${{ matrix.arch }}"
+        run: cp "koca-build/src/koca/target/$(uname -m)-unknown-linux-musl/release/koca" "koca-linux-${{ matrix.arch }}"
 
       - uses: actions/upload-artifact@v4
         with:
           name: binary-${{ matrix.arch }}
-          path: koca-${{ matrix.arch }}
+          path: koca-linux-${{ matrix.arch }}
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
@@ -99,7 +99,7 @@ jobs:
           set -euo pipefail
           for dir in binary-*; do
             arch="${dir#binary-}"
-            mv "$dir/koca-${arch}" "koca-${arch}"
+            mv "$dir/koca-linux-${arch}" "koca-linux-${arch}"
           done
-          gh release upload "$TAG" koca-x86_64 koca-aarch64 packages-*/*
+          gh release upload "$TAG" koca-linux-x64 koca-linux-arm64 packages-*/*
           gh release edit "$TAG" --draft=false

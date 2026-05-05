@@ -3,6 +3,7 @@ use std::io::{self, Write};
 use crossterm::{cursor, execute, terminal};
 use koca::backend::{ActionKind, DownloadEvent, Event, InstallEvent, PlannedAction, RemoveEvent};
 use koca::dep::DepConstraint;
+use koca::source::SourceProgress;
 use zolt::Colorize;
 
 use super::{CreateUi, BUILD_GUTTER_MAX, SPINNERS};
@@ -210,6 +211,7 @@ pub struct KocaCreateUi {
     inst_active: Vec<String>,
     inst_is_remove: bool,
     inst_lines_drawn: u16,
+    src_lines_drawn: u16,
 }
 
 impl KocaCreateUi {
@@ -233,6 +235,7 @@ impl KocaCreateUi {
             inst_active: Vec::new(),
             inst_is_remove: false,
             inst_lines_drawn: 0,
+            src_lines_drawn: 0,
         })
     }
 
@@ -405,6 +408,7 @@ impl KocaCreateUi {
         self.inst_lines_drawn = 0;
         Ok(())
     }
+
 }
 
 impl CreateUi for KocaCreateUi {
@@ -659,6 +663,138 @@ impl CreateUi for KocaCreateUi {
         }
         println!();
         Ok(())
+    }
+
+    fn redraw_sources(&mut self, items: &[SourceProgress], display_urls: &[String]) -> io::Result<()> {
+        let mut out = io::stdout();
+
+        if self.src_lines_drawn > 0 {
+            execute!(out, cursor::MoveUp(self.src_lines_drawn))?;
+        }
+
+        let spinner = SPINNERS[self.tick % SPINNERS.len()];
+        let mut drawn: u16 = 0;
+
+        let total = items.len();
+        let completed = items.iter().filter(|i| i.done && i.error.is_none()).count();
+        let failed = items.iter().filter(|i| i.error.is_some()).count();
+        let bytes_done: u64 = items.iter().map(|i| i.bytes).sum();
+        let bytes_total: Option<u64> = {
+            let known: Vec<u64> = items.iter().filter_map(|i| i.total_bytes).collect();
+            if known.len() == items.len() {
+                Some(known.iter().sum())
+            } else {
+                None
+            }
+        };
+
+        let size_str = match bytes_total {
+            Some(t) if t > 0 => format!("{}/{}", format_bytes(bytes_done), format_bytes(t)),
+            _ => format_bytes(bytes_done),
+        };
+
+        clear_line(&mut out)?;
+        if failed > 0 {
+            writeln!(
+                out,
+                "{} {} {} {}, {} {} ({})",
+                spinner.blue(),
+                "Fetching sources".bold(),
+                completed,
+                "completed".green(),
+                failed,
+                "failed".red(),
+                size_str,
+            )?;
+        } else {
+            writeln!(
+                out,
+                "{} {} {}/{} ({})",
+                spinner.blue(),
+                "Fetching sources".bold(),
+                completed,
+                total,
+                size_str,
+            )?;
+        }
+        drawn += 1;
+
+        for (i, item) in items.iter().enumerate() {
+            if item.done || item.error.is_some() {
+                continue;
+            }
+            clear_line(&mut out)?;
+            let url = &display_urls[i];
+            if let Some(f) = item.fraction {
+                let bar_w = 20usize;
+                let filled = ((bar_w as f64 * f) as usize).min(bar_w);
+                writeln!(
+                    out,
+                    "  {} {}{} {}",
+                    url,
+                    "\u{2588}".repeat(filled).green(),
+                    "\u{2591}".repeat(bar_w.saturating_sub(filled)).dimmed(),
+                    item.detail.dimmed(),
+                )?;
+            } else if item.detail.is_empty() {
+                writeln!(out, "  {}", url)?;
+            } else {
+                writeln!(out, "  {} {}", url, item.detail.dimmed())?;
+            }
+            drawn += 1;
+        }
+
+        let prev = self.src_lines_drawn;
+        for _ in drawn..prev {
+            clear_line(&mut out)?;
+            writeln!(out)?;
+        }
+        if drawn < prev {
+            execute!(out, cursor::MoveUp(prev - drawn))?;
+        }
+
+        self.src_lines_drawn = drawn;
+        out.flush()
+    }
+
+    fn finish_sources(&mut self, items: &[SourceProgress], display_urls: &[String]) -> io::Result<()> {
+        let mut out = io::stdout();
+        erase_lines(&mut out, self.src_lines_drawn)?;
+        clear_line(&mut out)?;
+
+        let total = items.len() as u32;
+        let failed: Vec<_> = items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, item)| item.error.as_ref().map(|e| (i, e)))
+            .collect();
+        let succeeded = total - failed.len() as u32;
+        let total_bytes: u64 = items.iter().map(|i| i.bytes).sum();
+
+        if failed.is_empty() {
+            writeln!(
+                out,
+                "{} {} source(s) ({})",
+                "Fetched".green(),
+                total,
+                format_bytes(total_bytes).bold()
+            )?;
+        } else {
+            writeln!(
+                out,
+                "Fetched sources: {} {}, {} {}",
+                succeeded,
+                "completed".green(),
+                failed.len(),
+                "failed".red(),
+            )?;
+            for (i, err) in &failed {
+                writeln!(out, "  - {} {}", display_urls[*i], err.red())?;
+            }
+        }
+
+        self.src_lines_drawn = 0;
+        out.flush()
     }
 
     fn start_build(&mut self) -> io::Result<()> {

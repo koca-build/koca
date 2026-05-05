@@ -1,8 +1,10 @@
 use koca::{
     backend::{Backend, Command, InstalledStatus, ResultPayload},
     distro::Distro,
+    source::{fetch_source, SourceProgress, SourceProgressState},
     BuildFile,
 };
+use std::sync::{Arc, Mutex};
 use std::str::FromStr;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -185,27 +187,91 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
         }
     }
 
-    ui.start_build()?;
+    // Fetch sources.
+    let arch = build_file.arch()[0].clone();
+    let sources = build_file.sources(&arch).to_vec();
 
-    let build_result = build_file
-        .run_build_with_output(|line| match line {
-            Some(line) => {
-                ui.on_build_line(&line.line).ok();
-            }
-            None => {
-                ui.tick().ok();
-            }
-        })
-        .await;
+    if !sources.is_empty() {
+        let srcdir = std::path::Path::new("koca-build/src");
+        std::fs::create_dir_all(srcdir).map_err(|err| CliError::Io { err })?;
 
-    if let Err(err) = build_result {
-        ui.show_failure("build")?;
-        return Err(CliError::Koca { err }.into());
+        let display_urls: Vec<String> = sources.iter().map(|s| s.display_url()).collect();
+        let progress: SourceProgressState = Arc::new(Mutex::new(
+            sources.iter().map(|_| SourceProgress::new()).collect(),
+        ));
+
+        ui.redraw_sources(&progress.lock().unwrap(), &display_urls)?;
+
+        let mut handles = Vec::new();
+        for (i, source) in sources.iter().enumerate() {
+            let source = source.clone();
+            let srcdir = srcdir.to_path_buf();
+            let progress = Arc::clone(&progress);
+            handles.push(tokio::spawn(async move {
+                fetch_source(&source, &srcdir, i, &progress).await
+            }));
+        }
+
+        let mut ticker = tokio::time::interval(std::time::Duration::from_millis(80));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        let all_done = async {
+            let mut errors = Vec::new();
+            for handle in handles {
+                if let Ok(Err(e)) = handle.await {
+                    errors.push(e);
+                }
+            }
+            errors
+        };
+        tokio::pin!(all_done);
+
+        let fetch_errors = loop {
+            tokio::select! {
+                _ = ticker.tick() => {
+                    ui.tick().ok();
+                    ui.redraw_sources(&progress.lock().unwrap(), &display_urls)?;
+                }
+                errors = &mut all_done => break errors,
+            }
+        };
+
+        ui.finish_sources(&progress.lock().unwrap(), &display_urls)?;
+
+        if !fetch_errors.is_empty() {
+            return Err(CliError::Koca {
+                err: koca::KocaError::InvalidSource(
+                    format!("{} source(s) failed to fetch", fetch_errors.len()),
+                ),
+            }
+            .into());
+        }
     }
 
     let pkgbase = build_file.pkgbase().to_string();
     let version = build_file.version().to_string();
-    ui.finish_build(&pkgbase, &version)?;
+
+    if build_file.has_build() {
+        ui.start_build()?;
+
+        let build_result = build_file
+            .run_build_with_output(|line| match line {
+                Some(line) => {
+                    ui.on_build_line(&line.line).ok();
+                }
+                None => {
+                    ui.tick().ok();
+                }
+            })
+            .await;
+
+        if let Err(err) = build_result {
+            ui.show_failure("build")?;
+            return Err(CliError::Koca { err }.into());
+        }
+
+        ui.finish_build(&pkgbase, &version)?;
+    }
 
     let output_type_str = args.output_type.as_str();
 
@@ -262,7 +328,6 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
         return Err(CliError::PackageFailed.into());
     }
 
-    let arch = build_file.arch()[0].clone();
     let mut output_files = Vec::new();
     for name in build_file.pkgnames() {
         for fmt in args.output_type.bundle_formats() {
