@@ -46,9 +46,9 @@ detect_arch() {
   local arch
   arch="$(uname -m)"
   case "$arch" in
-    x86_64)  echo "x86_64" ;;
-    aarch64) echo "aarch64" ;;
-    arm64)   echo "aarch64" ;;
+    x86_64)  echo "x64" ;;
+    aarch64) echo "arm64" ;;
+    arm64)   echo "arm64" ;;
     *)       die "unsupported architecture: $arch" ;;
   esac
 }
@@ -126,7 +126,7 @@ main() {
     binary)
       info "method   binary"
       local bin_file="${tmpdir}/koca"
-      download "${base_url}/koca-${arch}" "$bin_file"
+      download "${base_url}/koca-linux-${arch}" "$bin_file"
       chmod +x "$bin_file"
       info "installing to /usr/local/bin/koca..."
       sudo mv "$bin_file" /usr/local/bin/koca

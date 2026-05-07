@@ -2,11 +2,12 @@ mod ui;
 
 use koca::backend::{Event, PlannedAction};
 use koca::dep::DepConstraint;
+pub use koca::source::SourceProgress;
 use std::io;
 
 pub use ui::KocaCreateUi;
 
-const SPINNERS: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+pub const SPINNERS: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const BUILD_GUTTER_MAX: usize = 5;
 
 // ── Trait ──
@@ -26,6 +27,17 @@ pub trait CreateUi {
     fn tick(&mut self) -> io::Result<()>;
 
     fn finish_install(&mut self, total_bytes: u64, installed_count: u32) -> io::Result<()>;
+
+    fn redraw_sources(
+        &mut self,
+        items: &[SourceProgress],
+        display_urls: &[String],
+    ) -> io::Result<()>;
+    fn finish_sources(
+        &mut self,
+        items: &[SourceProgress],
+        display_urls: &[String],
+    ) -> io::Result<()>;
 
     fn start_build(&mut self) -> io::Result<()>;
     fn on_build_line(&mut self, line: &str) -> io::Result<()>;

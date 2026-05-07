@@ -2,54 +2,45 @@ use std::str::FromStr;
 
 use crate::{KocaError, KocaParserError, KocaResult};
 
-/// A package's architecture. This can be created from a string using the [`Arch::try_from`] method.
-#[derive(Clone, Debug)]
+/// A package's architecture.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Arch {
-    /// The `all` architecture:
-    /// The source package is architecture-agnostic, as well as the built package (i.e. a Python script).
+    /// Architecture-agnostic source and binary (e.g. a Python script).
     All,
-    /// The `any` architecture:
-    /// The source package is architecture-agnostic, but the built package is tied to a specific architecture (i.e. a compiled C program).
+    /// Architecture-agnostic source, architecture-specific binary (e.g. compiled C).
     Any,
-    /// The `x86_64` architecture (or `amd64` on Debian-based system):
-    /// The source package requires a specific architecture, as well as the built package (i.e. a proprietary, prebuilt-executable built outside of the Koca build file).
-    X86_64,
-    /// The `aarch64` architecture (or `arm64` on Debian-based systems):
-    /// The source package requires a specific architecture, as well as the built package.
-    Aarch64,
+    /// 64-bit x86. Accepts `x64`, `x86_64`, `amd64`.
+    X64,
+    /// 64-bit ARM. Accepts `arm64`, `aarch64`.
+    Arm64,
 }
 
 impl FromStr for Arch {
     type Err = KocaError;
 
-    /// Convert a string to an `Arch`.
-    ///
-    /// This also takes in Debian-style architecture strings (i.e. `x86_64` or `amd64`).
-    ///
-    /// Returns [`KocaParserError::InvalidArch`] if the string is not a valid architecture.
     fn from_str(value: &str) -> KocaResult<Self> {
         match value {
             "all" => Ok(Arch::All),
             "any" => Ok(Arch::Any),
-            "amd64" | "x86_64" => Ok(Arch::X86_64),
-            "arm64" | "aarch64" => Ok(Arch::Aarch64),
+            "x64" | "x86_64" | "amd64" => Ok(Arch::X64),
+            "arm64" | "aarch64" => Ok(Arch::Arm64),
             _ => Err(KocaParserError::InvalidArch(value.to_string()).into()),
         }
     }
 }
 
 impl Arch {
-    /// Display the [`Arch`] as a string.
+    /// Canonical display string.
     pub fn get_string(&self) -> &'static str {
         match self {
             Arch::All => "all",
             Arch::Any => "any",
-            Arch::X86_64 => "x86_64",
-            Arch::Aarch64 => "aarch64",
+            Arch::X64 => "x64",
+            Arch::Arm64 => "arm64",
         }
     }
 
-    /// Display the [`Arch`] as a Debian-based architecture string.
+    /// Debian-style architecture string.
     pub fn get_deb_string(&self) -> &'static str {
         match self {
             Arch::All => "all",
@@ -58,12 +49,12 @@ impl Arch {
                 "aarch64" => "arm64",
                 other => panic!("unsupported architecture: {other}"),
             },
-            Arch::X86_64 => "amd64",
-            Arch::Aarch64 => "arm64",
+            Arch::X64 => "amd64",
+            Arch::Arm64 => "arm64",
         }
     }
 
-    /// Display the [`Arch`] as an RPM-based architecture string.
+    /// RPM-style architecture string.
     pub fn get_rpm_string(&self) -> &'static str {
         match self {
             Arch::All => "noarch",
@@ -72,8 +63,8 @@ impl Arch {
                 "aarch64" => "aarch64",
                 other => panic!("unsupported architecture: {other}"),
             },
-            Arch::X86_64 => "x86_64",
-            Arch::Aarch64 => "aarch64",
+            Arch::X64 => "x86_64",
+            Arch::Arm64 => "aarch64",
         }
     }
 
@@ -86,8 +77,18 @@ impl Arch {
                 "aarch64" => rfpm::Arch::Arm64,
                 other => panic!("unsupported architecture: {other}"),
             },
-            Arch::X86_64 => rfpm::Arch::Amd64,
-            Arch::Aarch64 => rfpm::Arch::Arm64,
+            Arch::X64 => rfpm::Arch::Amd64,
+            Arch::Arm64 => rfpm::Arch::Arm64,
+        }
+    }
+
+    /// All string variants that parse to this arch. Useful for matching `source_SUFFIX` variables.
+    pub fn suffixes(&self) -> &[&str] {
+        match self {
+            Arch::All => &["all"],
+            Arch::Any => &["any"],
+            Arch::X64 => &["x64", "x86_64", "amd64"],
+            Arch::Arm64 => &["arm64", "aarch64"],
         }
     }
 }
