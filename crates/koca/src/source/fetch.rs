@@ -192,8 +192,7 @@ async fn fetch_git(
 
         if let Some(GitRef::Commit(ref hash)) = reference {
             let result = (|| -> Result<(), String> {
-                let repo = git2::Repository::init(&dest)
-                    .map_err(|e| e.message().to_string())?;
+                let repo = git2::Repository::init(&dest).map_err(|e| e.message().to_string())?;
                 let mut remote = repo
                     .remote("origin", &url)
                     .map_err(|e| e.message().to_string())?;
@@ -216,8 +215,12 @@ async fn fetch_git(
             let mut builder = git2::build::RepoBuilder::new();
             builder.fetch_options(fo);
             match &reference {
-                Some(GitRef::Branch(b)) => { builder.branch(b); }
-                Some(GitRef::Tag(t)) => { builder.branch(t); }
+                Some(GitRef::Branch(b)) => {
+                    builder.branch(b);
+                }
+                Some(GitRef::Tag(t)) => {
+                    builder.branch(t);
+                }
                 _ => {}
             }
             builder
