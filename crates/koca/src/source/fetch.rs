@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use super::{GitRef, Source, SourceKind};
+use tempfile::NamedTempFile;
 
 /// Per-item progress state, updated by the fetcher, read by the UI.
 pub struct SourceProgress {
@@ -114,7 +115,9 @@ async fn fetch_http(
         s[index].detail = format!("0 B/{}", format_bytes(t));
     }
 
-    let mut file = tokio::fs::File::create(&dest)
+    let tmp = NamedTempFile::new_in(dest_dir).map_err(|e| e.to_string())?;
+    let tmp_path = tmp.into_temp_path();
+    let mut file = tokio::fs::File::create(&tmp_path)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -139,6 +142,9 @@ async fn fetch_http(
         s[index].fraction = fraction;
         s[index].detail = detail;
     }
+
+    drop(file);
+    tmp_path.persist(&dest).map_err(|e| e.to_string())?;
 
     let mut s = progress.lock().unwrap();
     s[index].done = true;
@@ -184,37 +190,40 @@ async fn fetch_git(
         fo.remote_callbacks(cb);
         fo.depth(1);
 
-        let mut builder = git2::build::RepoBuilder::new();
-        builder.fetch_options(fo);
-
-        if let Some(ref git_ref) = reference {
-            match git_ref {
-                GitRef::Branch(b) => {
-                    builder.branch(b);
-                }
-                GitRef::Tag(t) => {
-                    builder.branch(t);
-                }
-                GitRef::Commit(_) => {
-                    // Clone first, checkout commit after.
-                }
-            }
-        }
-
-        let repo = builder
-            .clone(&url, &dest)
-            .map_err(|e| e.message().to_string())?;
-
-        // For commit refs, checkout after clone.
         if let Some(GitRef::Commit(ref hash)) = reference {
-            let oid = git2::Oid::from_str(hash).map_err(|e| e.message().to_string())?;
-            let commit = repo.find_commit(oid).map_err(|e| e.message().to_string())?;
-            repo.checkout_tree(commit.as_object(), None)
-                .map_err(|e| e.message().to_string())?;
-            repo.set_head_detached(oid)
+            let result = (|| -> Result<(), String> {
+                let repo = git2::Repository::init(&dest)
+                    .map_err(|e| e.message().to_string())?;
+                let mut remote = repo
+                    .remote("origin", &url)
+                    .map_err(|e| e.message().to_string())?;
+                remote
+                    .fetch(&[hash.as_str()], Some(&mut fo), None)
+                    .map_err(|e| e.message().to_string())?;
+                let oid = git2::Oid::from_str(hash).map_err(|e| e.message().to_string())?;
+                let commit = repo.find_commit(oid).map_err(|e| e.message().to_string())?;
+                repo.checkout_tree(commit.as_object(), None)
+                    .map_err(|e| e.message().to_string())?;
+                repo.set_head_detached(oid)
+                    .map_err(|e| e.message().to_string())?;
+                Ok(())
+            })();
+            if result.is_err() {
+                let _ = std::fs::remove_dir_all(&dest);
+                return result;
+            }
+        } else {
+            let mut builder = git2::build::RepoBuilder::new();
+            builder.fetch_options(fo);
+            match &reference {
+                Some(GitRef::Branch(b)) => { builder.branch(b); }
+                Some(GitRef::Tag(t)) => { builder.branch(t); }
+                _ => {}
+            }
+            builder
+                .clone(&url, &dest)
                 .map_err(|e| e.message().to_string())?;
         }
-
         progress.lock().unwrap()[index].done = true;
         Ok(())
     })

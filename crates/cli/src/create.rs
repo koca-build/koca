@@ -217,8 +217,10 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
         let all_done = async {
             let mut errors = Vec::new();
             for handle in handles {
-                if let Ok(Err(e)) = handle.await {
-                    errors.push(e);
+                match handle.await {
+                    Ok(Err(e)) => errors.push(e),
+                    Err(join_err) => errors.push(join_err.to_string()),
+                    Ok(Ok(())) => {}
                 }
             }
             errors
