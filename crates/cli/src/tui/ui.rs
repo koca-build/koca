@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use crossterm::{cursor, execute, terminal};
 use koca::backend::{ActionKind, DownloadEvent, Event, InstallEvent, PlannedAction, RemoveEvent};
 use koca::dep::DepConstraint;
-use koca::source::SourceProgress;
+use koca::source::{format_bytes, SourceProgress};
 use zolt::Colorize;
 
 use super::{CreateUi, BUILD_GUTTER_MAX, SPINNERS};
@@ -28,18 +28,6 @@ fn erase_lines(out: &mut impl Write, count: u16) -> io::Result<()> {
         writeln!(out)?;
     }
     execute!(out, cursor::MoveUp(count))
-}
-
-fn format_bytes(b: u64) -> String {
-    if b >= 1_000_000_000 {
-        format!("{:.1} GB", b as f64 / 1_000_000_000.0)
-    } else if b >= 1_000_000 {
-        format!("{:.1} MB", b as f64 / 1_000_000.0)
-    } else if b >= 1_000 {
-        format!("{:.0} KB", b as f64 / 1_000.0)
-    } else {
-        format!("{} B", b)
-    }
 }
 
 // ── Column layout (à la `apt` Output-Version >= 30) ─────────────────────
@@ -408,7 +396,6 @@ impl KocaCreateUi {
         self.inst_lines_drawn = 0;
         Ok(())
     }
-
 }
 
 impl CreateUi for KocaCreateUi {
@@ -665,7 +652,11 @@ impl CreateUi for KocaCreateUi {
         Ok(())
     }
 
-    fn redraw_sources(&mut self, items: &[SourceProgress], display_urls: &[String]) -> io::Result<()> {
+    fn redraw_sources(
+        &mut self,
+        items: &[SourceProgress],
+        display_urls: &[String],
+    ) -> io::Result<()> {
         let mut out = io::stdout();
 
         if self.src_lines_drawn > 0 {
@@ -757,7 +748,11 @@ impl CreateUi for KocaCreateUi {
         out.flush()
     }
 
-    fn finish_sources(&mut self, items: &[SourceProgress], display_urls: &[String]) -> io::Result<()> {
+    fn finish_sources(
+        &mut self,
+        items: &[SourceProgress],
+        display_urls: &[String],
+    ) -> io::Result<()> {
         let mut out = io::stdout();
         erase_lines(&mut out, self.src_lines_drawn)?;
         clear_line(&mut out)?;

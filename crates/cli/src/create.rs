@@ -4,8 +4,8 @@ use koca::{
     source::{fetch_source, SourceProgress, SourceProgressState},
     BuildFile,
 };
-use std::sync::{Arc, Mutex};
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::{
@@ -187,7 +187,6 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
         }
     }
 
-    // Fetch sources.
     let arch = build_file.arch()[0].clone();
     let sources = build_file.sources(&arch).to_vec();
 
@@ -240,9 +239,10 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
 
         if !fetch_errors.is_empty() {
             return Err(CliError::Koca {
-                err: koca::KocaError::InvalidSource(
-                    format!("{} source(s) failed to fetch", fetch_errors.len()),
-                ),
+                err: koca::KocaError::InvalidSource(format!(
+                    "{} source(s) failed to fetch",
+                    fetch_errors.len()
+                )),
             }
             .into());
         }

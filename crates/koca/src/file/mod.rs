@@ -239,14 +239,9 @@ impl BuildFile {
             WordPiece::ParameterExpansion(ParameterExpr::Parameter {
                 parameter: Parameter::Named(name),
                 indirect: false,
-            }) => vars
-                .get(&name)
-                .cloned()
-                .ok_or_else(|| {
-                    KocaError::InvalidSource(format!(
-                        "undefined variable '${name}' in '{var_name}'"
-                    ))
-                }),
+            }) => vars.get(&name).cloned().ok_or_else(|| {
+                KocaError::InvalidSource(format!("undefined variable '${name}' in '{var_name}'"))
+            }),
             WordPiece::DoubleQuotedSequence(seq) => {
                 let mut out = String::new();
                 for item in seq {
@@ -575,7 +570,6 @@ impl BuildFile {
             opt_packages = None;
         }
 
-
         // TODO: We need to handle this better so the user knows if the epoch/pkgrel itself is invalid.
         let parsed_version = if let Some(mut pkgver) = opt_pkgver {
             if let Some(epoch) = opt_epoch {
@@ -816,12 +810,7 @@ impl BuildFile {
     }
 
     /// Bundle the named package into the given file format.
-    pub fn bundle(
-        &self,
-        pkg_name: &str,
-        format: BundleFormat,
-        out_file: &Path,
-    ) -> KocaResult<()> {
+    pub fn bundle(&self, pkg_name: &str, format: BundleFormat, out_file: &Path) -> KocaResult<()> {
         let pkg_dir = dirs::pkg_for(pkg_name);
         let rfpm_arch = self.var_arch[0].to_rfpm();
 
@@ -937,17 +926,9 @@ impl BuildFile {
     /// Returns `source_$ARCH` if defined, otherwise falls back to `source`.
     /// Returns an empty slice if neither is defined.
     pub fn sources(&self, arch: &Arch) -> &[crate::source::Source] {
-        // Try arch-specific first by checking all suffixes for this arch.
-        for (key, sources) in &self.var_source {
-            if let Some(key_arch) = key {
-                if key_arch.get_string() == arch.get_string() {
-                    return sources;
-                }
-            }
-        }
-        // Fall back to base source=().
         self.var_source
-            .get(&None)
+            .get(&Some(arch.clone()))
+            .or_else(|| self.var_source.get(&None))
             .map(|v| v.as_slice())
             .unwrap_or(&[])
     }

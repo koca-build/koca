@@ -19,6 +19,12 @@ pub struct SourceProgress {
     pub error: Option<String>,
 }
 
+impl Default for SourceProgress {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SourceProgress {
     pub fn new() -> Self {
         Self {
@@ -35,7 +41,7 @@ impl SourceProgress {
 /// Shared state for all source fetches.
 pub type SourceProgressState = Arc<Mutex<Vec<SourceProgress>>>;
 
-fn format_bytes(b: u64) -> String {
+pub fn format_bytes(b: u64) -> String {
     if b >= 1_000_000_000 {
         format!("{:.1} GB", b as f64 / 1_000_000_000.0)
     } else if b >= 1_000_000 {
@@ -91,16 +97,13 @@ async fn fetch_http(
         .build()
         .map_err(|e| e.to_string())?;
 
-    let mut response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut response = client.get(url).send().await.map_err(|e| e.to_string())?;
 
     if !response.status().is_success() {
         let msg = format!("HTTP {}", response.status());
-        progress.lock().unwrap()[index].error = Some(msg.clone());
-        progress.lock().unwrap()[index].done = true;
+        let mut s = progress.lock().unwrap();
+        s[index].error = Some(msg.clone());
+        s[index].done = true;
         return Err(msg);
     }
 
@@ -122,14 +125,19 @@ async fn fetch_http(
             .map_err(|e| e.to_string())?;
         downloaded += chunk.len() as u64;
 
+        let (fraction, detail) = if let Some(t) = total {
+            (
+                Some((downloaded as f64 / t as f64).min(1.0)),
+                format!("{}/{}", format_bytes(downloaded), format_bytes(t)),
+            )
+        } else {
+            (None, format_bytes(downloaded))
+        };
+
         let mut s = progress.lock().unwrap();
         s[index].bytes = downloaded;
-        if let Some(t) = total {
-            s[index].fraction = Some((downloaded as f64 / t as f64).min(1.0));
-            s[index].detail = format!("{}/{}", format_bytes(downloaded), format_bytes(t));
-        } else {
-            s[index].detail = format_bytes(downloaded);
-        }
+        s[index].fraction = fraction;
+        s[index].detail = detail;
     }
 
     let mut s = progress.lock().unwrap();
@@ -151,7 +159,6 @@ async fn fetch_git(
     }
     let url = url.to_string();
     let reference = reference.cloned();
-    let dest = dest_dir.join(source.dest_name());
     let progress = Arc::clone(progress);
 
     tokio::task::spawn_blocking(move || {
@@ -167,12 +174,8 @@ async fn fetch_git(
             s[index].bytes = bytes;
             if total > 0 {
                 s[index].fraction = Some(received as f64 / total as f64);
-                s[index].detail = format!(
-                    "{}/{} objects ({})",
-                    received,
-                    total,
-                    format_bytes(bytes)
-                );
+                s[index].detail =
+                    format!("{}/{} objects ({})", received, total, format_bytes(bytes));
             }
             true
         });

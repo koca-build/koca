@@ -1,6 +1,6 @@
 mod fetch;
 
-pub use fetch::{fetch_source, SourceProgress, SourceProgressState};
+pub use fetch::{fetch_source, format_bytes, SourceProgress, SourceProgressState};
 
 use std::path::PathBuf;
 
@@ -184,38 +184,50 @@ mod tests {
     fn parse_http() {
         let s = Source::parse("https://example.com/foo-1.0.tar.gz").unwrap();
         assert!(s.filename.is_none());
-        assert!(matches!(s.kind, SourceKind::Http { ref url } if url == "https://example.com/foo-1.0.tar.gz"));
+        assert!(
+            matches!(s.kind, SourceKind::Http { ref url } if url == "https://example.com/foo-1.0.tar.gz")
+        );
     }
 
     #[test]
     fn parse_http_rename() {
         let s = Source::parse("custom.tar.gz::https://example.com/foo.tar.gz").unwrap();
         assert_eq!(s.filename.as_deref(), Some("custom.tar.gz"));
-        assert!(matches!(s.kind, SourceKind::Http { ref url } if url == "https://example.com/foo.tar.gz"));
+        assert!(
+            matches!(s.kind, SourceKind::Http { ref url } if url == "https://example.com/foo.tar.gz")
+        );
     }
 
     #[test]
     fn parse_git_bare() {
         let s = Source::parse("git+https://github.com/user/repo").unwrap();
-        assert!(matches!(s.kind, SourceKind::Git { ref url, ref reference } if url == "https://github.com/user/repo" && reference.is_none()));
+        assert!(
+            matches!(s.kind, SourceKind::Git { ref url, ref reference } if url == "https://github.com/user/repo" && reference.is_none())
+        );
     }
 
     #[test]
     fn parse_git_tag() {
         let s = Source::parse("git+https://github.com/user/repo#tag=v1.0").unwrap();
-        assert!(matches!(s.kind, SourceKind::Git { ref reference, .. } if matches!(reference, Some(GitRef::Tag(t)) if t == "v1.0")));
+        assert!(
+            matches!(s.kind, SourceKind::Git { ref reference, .. } if matches!(reference, Some(GitRef::Tag(t)) if t == "v1.0"))
+        );
     }
 
     #[test]
     fn parse_git_branch() {
         let s = Source::parse("git+https://github.com/user/repo#branch=main").unwrap();
-        assert!(matches!(s.kind, SourceKind::Git { ref reference, .. } if matches!(reference, Some(GitRef::Branch(b)) if b == "main")));
+        assert!(
+            matches!(s.kind, SourceKind::Git { ref reference, .. } if matches!(reference, Some(GitRef::Branch(b)) if b == "main"))
+        );
     }
 
     #[test]
     fn parse_git_commit() {
         let s = Source::parse("git+https://github.com/user/repo#commit=abc123").unwrap();
-        assert!(matches!(s.kind, SourceKind::Git { ref reference, .. } if matches!(reference, Some(GitRef::Commit(c)) if c == "abc123")));
+        assert!(
+            matches!(s.kind, SourceKind::Git { ref reference, .. } if matches!(reference, Some(GitRef::Commit(c)) if c == "abc123"))
+        );
     }
 
     #[test]
@@ -234,7 +246,9 @@ mod tests {
     #[test]
     fn parse_local() {
         let s = Source::parse("/path/to/file.tar.gz").unwrap();
-        assert!(matches!(s.kind, SourceKind::Local { ref path } if path == &PathBuf::from("/path/to/file.tar.gz")));
+        assert!(
+            matches!(s.kind, SourceKind::Local { ref path } if path == &PathBuf::from("/path/to/file.tar.gz"))
+        );
     }
 
     #[test]
@@ -245,46 +259,89 @@ mod tests {
 
     #[test]
     fn display_url_http() {
-        assert_eq!(Source::parse("https://example.com/f.tar.gz").unwrap().display_url(), "https://example.com/f.tar.gz");
+        assert_eq!(
+            Source::parse("https://example.com/f.tar.gz")
+                .unwrap()
+                .display_url(),
+            "https://example.com/f.tar.gz"
+        );
     }
 
     #[test]
     fn display_url_http_rename() {
-        assert_eq!(Source::parse("x::https://example.com/f.tar.gz").unwrap().display_url(), "https://example.com/f.tar.gz");
+        assert_eq!(
+            Source::parse("x::https://example.com/f.tar.gz")
+                .unwrap()
+                .display_url(),
+            "https://example.com/f.tar.gz"
+        );
     }
 
     #[test]
     fn display_url_git_tag() {
-        assert_eq!(Source::parse("git+https://github.com/u/r#tag=v1.0").unwrap().display_url(), "https://github.com/u/r (tag=v1.0)");
+        assert_eq!(
+            Source::parse("git+https://github.com/u/r#tag=v1.0")
+                .unwrap()
+                .display_url(),
+            "https://github.com/u/r (tag=v1.0)"
+        );
     }
 
     #[test]
     fn display_url_git_bare() {
-        assert_eq!(Source::parse("git+https://github.com/u/r").unwrap().display_url(), "https://github.com/u/r");
+        assert_eq!(
+            Source::parse("git+https://github.com/u/r")
+                .unwrap()
+                .display_url(),
+            "https://github.com/u/r"
+        );
     }
 
     #[test]
     fn dest_name_http() {
-        assert_eq!(Source::parse("https://example.com/foo-1.0.tar.gz").unwrap().dest_name(), "foo-1.0.tar.gz");
+        assert_eq!(
+            Source::parse("https://example.com/foo-1.0.tar.gz")
+                .unwrap()
+                .dest_name(),
+            "foo-1.0.tar.gz"
+        );
     }
 
     #[test]
     fn dest_name_rename() {
-        assert_eq!(Source::parse("custom.tar.gz::https://example.com/foo.tar.gz").unwrap().dest_name(), "custom.tar.gz");
+        assert_eq!(
+            Source::parse("custom.tar.gz::https://example.com/foo.tar.gz")
+                .unwrap()
+                .dest_name(),
+            "custom.tar.gz"
+        );
     }
 
     #[test]
     fn dest_name_git_strips_dotgit() {
-        assert_eq!(Source::parse("git+https://github.com/u/repo.git#tag=v1").unwrap().dest_name(), "repo");
+        assert_eq!(
+            Source::parse("git+https://github.com/u/repo.git#tag=v1")
+                .unwrap()
+                .dest_name(),
+            "repo"
+        );
     }
 
     #[test]
     fn dest_name_git_no_dotgit() {
-        assert_eq!(Source::parse("git+https://github.com/u/repo#tag=v1").unwrap().dest_name(), "repo");
+        assert_eq!(
+            Source::parse("git+https://github.com/u/repo#tag=v1")
+                .unwrap()
+                .dest_name(),
+            "repo"
+        );
     }
 
     #[test]
     fn dest_name_local() {
-        assert_eq!(Source::parse("/path/to/file.patch").unwrap().dest_name(), "file.patch");
+        assert_eq!(
+            Source::parse("/path/to/file.patch").unwrap().dest_name(),
+            "file.patch"
+        );
     }
 }
