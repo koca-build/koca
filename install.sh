@@ -58,6 +58,7 @@ deb_arch() {
   case "$1" in
     x64)   echo "amd64" ;;
     arm64) echo "arm64" ;;
+    *)     die "unsupported deb architecture: $1" ;;
   esac
 }
 
@@ -65,6 +66,7 @@ rpm_arch() {
   case "$1" in
     x64)   echo "x86_64" ;;
     arm64) echo "aarch64" ;;
+    *)     die "unsupported rpm architecture: $1" ;;
   esac
 }
 
