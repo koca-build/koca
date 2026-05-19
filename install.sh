@@ -15,6 +15,19 @@ success() { printf "  ${GREEN}✓${RESET} %b\n" "$*"; }
 die()     { printf "\n  ${RED}✗ error:${RESET} %s\n\n" "$*" >&2; exit 1; }
 dim()     { printf "    ${DIM}%s${RESET}\n" "$*"; }
 
+SUDO=""
+detect_sudo() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    SUDO=""
+  elif command -v sudo &>/dev/null; then
+    SUDO="sudo"
+  else
+    die "this installer needs root privileges — run as root or install sudo"
+  fi
+}
+
+as_root() { $SUDO "$@"; }
+
 banner() {
   printf "\n"
   printf "  ${PURPLE}██╗  ██╗ ██████╗  ██████╗ █████╗${RESET}\n"
@@ -91,6 +104,7 @@ download() {
 # ── install ───────────────────────────────────────────────────────────────────
 main() {
   banner
+  detect_sudo
 
   local version method arch tmpdir
   version="$(resolve_version)"
@@ -115,7 +129,7 @@ main() {
       download "${base_url}/koca_${version}-1_${arch_deb}.deb" "$koca_deb"
 
       info "installing via apt..."
-      sudo apt install -y "$koca_deb"
+      as_root apt install -y "$koca_deb"
       ;;
     rpm)
       info "method   rpm package"
@@ -127,11 +141,11 @@ main() {
 
       info "installing via rpm..."
       if command -v dnf &>/dev/null; then
-        sudo dnf install -y "$koca_rpm"
+        as_root dnf install -y "$koca_rpm"
       elif command -v yum &>/dev/null; then
-        sudo yum install -y "$koca_rpm"
+        as_root yum install -y "$koca_rpm"
       else
-        sudo rpm -i "$koca_rpm"
+        as_root rpm -i "$koca_rpm"
       fi
       ;;
     binary)
@@ -140,7 +154,7 @@ main() {
       download "${base_url}/koca-linux-${arch}" "$bin_file"
       chmod +x "$bin_file"
       info "installing to /usr/local/bin/koca..."
-      sudo mv "$bin_file" /usr/local/bin/koca
+      as_root mv "$bin_file" /usr/local/bin/koca
       ;;
   esac
 
