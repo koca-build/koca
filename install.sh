@@ -56,8 +56,15 @@ detect_arch() {
 # nfpm uses amd64/arm64 for .deb, x86_64/aarch64 for .rpm
 deb_arch() {
   case "$1" in
-    x86_64)  echo "amd64" ;;
-    aarch64) echo "arm64" ;;
+    x64)   echo "amd64" ;;
+    arm64) echo "arm64" ;;
+  esac
+}
+
+rpm_arch() {
+  case "$1" in
+    x64)   echo "x86_64" ;;
+    arm64) echo "aarch64" ;;
   esac
 }
 
@@ -111,8 +118,10 @@ main() {
     rpm)
       info "method   rpm package"
 
+      local arch_rpm
+      arch_rpm="$(rpm_arch "$arch")"
       local koca_rpm="${tmpdir}/koca.rpm"
-      download "${base_url}/koca_${version}-1_${arch}.rpm" "$koca_rpm"
+      download "${base_url}/koca_${version}-1_${arch_rpm}.rpm" "$koca_rpm"
 
       info "installing via rpm..."
       if command -v dnf &>/dev/null; then
