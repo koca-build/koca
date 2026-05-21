@@ -6,7 +6,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.6.1"
+version = "0.7.0"
 edition = "2021"
 repository = "https://github.com/koca-build/koca"
 
@@ -19,7 +19,7 @@ clap = { version = "4.5.37", features = ["derive", "env"] }
 directories = "6.0.0"
 flate2 = "1.1.2"
 git2 = { version = "0.20", features = ["vendored-libgit2", "vendored-openssl"] }
-koca = { path = "crates/koca", version = "0.6.1" }
+koca = { path = "crates/koca", version = "0.7.0" }
 rfpm = "0.2.1"
 spdx = "0.13.4"
 mailparse = "0.16.1"
