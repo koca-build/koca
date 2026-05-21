@@ -138,6 +138,12 @@ pub struct BuildFile {
     var_makedepends: Vec<crate::dep::DepConstraint>,
     /// The package's source entries, keyed by arch (None = base `source=()`).
     var_source: HashMap<Option<Arch>, Vec<crate::source::Source>>,
+    /// The package's SPDX license expression (optional).
+    var_license: Option<String>,
+    /// Paths to mark as config files in the output package (optional).
+    var_backup: Vec<String>,
+    /// The package's maintainer from `# Maintainer:` comment (optional).
+    var_maintainer: Option<String>,
     /// The package's `build` function (optional).
     build_func: Option<FunctionDefinition>,
     /// Package functions keyed by package name.
@@ -335,17 +341,72 @@ impl BuildFile {
         Ok(archs)
     }
 
+    fn parse_license(value: &DeclValue) -> KocaResult<String> {
+        let license = Self::get_decl_string(vars::LICENSE, value)?;
+        spdx::Expression::parse(&license)
+            .map_err(|e| KocaParserError::InvalidLicense(license.clone(), e.to_string()))?;
+        Ok(license)
+    }
+
+    fn parse_backup(value: &DeclValue) -> KocaMultiResult<Vec<String>> {
+        let paths = Self::parse_string_array(vars::BACKUP, value)?;
+        let mut errs = vec![];
+        for path in &paths {
+            if !path.starts_with('/') {
+                errs.push(KocaParserError::InvalidBackupPath(path.clone()).into());
+            }
+        }
+        if !errs.is_empty() {
+            return Err(errs);
+        }
+        Ok(paths)
+    }
+
+    /// Extract and validate the `# Maintainer:` comment from raw file text.
+    ///
+    /// Returns `Ok(Some(maintainer))` if found and valid, `Ok(None)` if absent,
+    /// or `Err` if present but invalid.
+    fn parse_maintainer(raw: &str) -> KocaResult<Option<String>> {
+        let Some(maintainer_str) = raw.lines().find_map(|line| {
+            line.trim()
+                .strip_prefix("# Maintainer:")
+                .map(|rest| rest.trim().to_string())
+        }) else {
+            return Ok(None);
+        };
+
+        match mailparse::addrparse(&maintainer_str) {
+            Ok(ref addr_list) if addr_list.count_addrs() == 1 => Ok(Some(maintainer_str)),
+            Ok(_) => Err(KocaParserError::InvalidMaintainer(
+                maintainer_str,
+                "expected exactly one address".into(),
+            )
+            .into()),
+            Err(e) => Err(KocaParserError::InvalidMaintainer(maintainer_str, e.to_string()).into()),
+        }
+    }
+
     /// Parse a Koca build script from the reader.
     ///
     /// Returns a [`KocaError::Parser`] error if the input is an invalid script.
-    pub async fn parse<R: Read>(reader: R) -> KocaMultiResult<Self> {
-        // Create the shell.
+    pub async fn parse<R: Read>(mut reader: R) -> KocaMultiResult<Self> {
+        // Read raw text to extract comments before brush strips them.
+        let mut raw = String::new();
+        reader
+            .read_to_string(&mut raw)
+            .map_err(|e| vec![KocaError::from(e)])?;
+
+        // Extract and validate # Maintainer: (brush strips comments).
+        let opt_maintainer = Self::parse_maintainer(&raw);
+
+        // Pass text to brush via Cursor.
+        let cursor = std::io::Cursor::new(raw.as_bytes());
         let create_options = Self::create_options();
         let shell = Shell::new(create_options)
             .await
             .expect("shell options should be valid");
         let program = shell
-            .parse(reader)
+            .parse(cursor)
             .map_err(|err| vec![KocaParserError::from(err).into()])?;
         let decl_items = parser::get_decls(&program).map_err(|err| vec![err])?;
 
@@ -361,12 +422,23 @@ impl BuildFile {
         let mut opt_depends: Vec<crate::dep::DepConstraint> = vec![];
         let mut opt_makedepends: Vec<crate::dep::DepConstraint> = vec![];
         let mut opt_source: HashMap<Option<Arch>, Vec<crate::source::Source>> = HashMap::new();
+        let mut opt_license: Option<String> = None;
+        let mut opt_backup: Vec<String> = vec![];
 
         let mut opt_build_func: Option<FunctionDefinition> = None;
         let mut single_package_func: Option<FunctionDefinition> = None;
         let mut split_package_funcs: HashMap<String, FunctionDefinition> = HashMap::new();
 
         let mut errs = vec![];
+
+        // Resolve maintainer from pre-brush comment extraction.
+        let opt_maintainer = match opt_maintainer {
+            Ok(m) => m,
+            Err(err) => {
+                errs.push(err);
+                None
+            }
+        };
 
         // Extract variables.
         for (key, value) in &decl_items.vars {
@@ -412,6 +484,14 @@ impl BuildFile {
                 vars::MAKEDEPENDS => match Self::parse_dep_array(vars::MAKEDEPENDS, value) {
                     Ok(makedepends) => opt_makedepends = makedepends,
                     Err(dep_errs) => errs.extend(dep_errs),
+                },
+                vars::LICENSE => match Self::parse_license(value) {
+                    Ok(license) => opt_license = Some(license),
+                    Err(err) => errs.push(err),
+                },
+                vars::BACKUP => match Self::parse_backup(value) {
+                    Ok(paths) => opt_backup = paths,
+                    Err(backup_errs) => errs.extend(backup_errs),
                 },
                 // source and source_* are deferred to pass 2 (need variable expansion).
                 _ if key == vars::SOURCE || key.starts_with("source_") => continue,
@@ -604,6 +684,9 @@ impl BuildFile {
             var_depends: opt_depends,
             var_makedepends: opt_makedepends,
             var_source: opt_source,
+            var_license: opt_license,
+            var_backup: opt_backup,
+            var_maintainer: opt_maintainer,
             build_func: opt_build_func,
             package_funcs,
         })
@@ -827,13 +910,14 @@ impl BuildFile {
             .map(|r| r.to_string())
             .unwrap_or_else(|| "1".to_string());
         pkg.epoch = self.var_version.epoch;
-        // TODO: Get maintainer from build file (https://github.com/reubeno/brush/issues/513).
-        pkg.maintainer = Some("Foo Bar <foobar@example.com>".to_string());
-        // TODO: Get license from build file.
-        pkg.license = Some("CONTACT-PUBLISHER".to_string());
+        pkg.maintainer = self.var_maintainer.clone();
+        pkg.license = self.var_license.clone();
         pkg.depends = self.var_depends.iter().map(|d| d.to_string()).collect();
 
         // Walk the package directory and add files. Ownership defaults to root:root.
+        let backup_set: std::collections::HashSet<&str> =
+            self.var_backup.iter().map(|p| p.as_str()).collect();
+
         for res_entry in WalkDir::new(&pkg_dir) {
             let entry = res_entry.map_err(|e| std::io::Error::other(e.to_string()))?;
             if entry.file_type().is_dir() {
@@ -852,15 +936,18 @@ impl BuildFile {
                 .expect("file metadata should always be readable");
             let mode = metadata.mode() & 0o7777;
 
+            let dest = format!("/{}", dst_path.display());
             let file = File::open(&src_path)?;
-            pkg.add_file_with(
-                format!("/{}", dst_path.display()),
-                file,
-                rfpm::FileOptions {
-                    mode,
-                    ..Default::default()
-                },
-            );
+            let opts = rfpm::FileOptions {
+                mode,
+                ..Default::default()
+            };
+
+            if backup_set.contains(dest.as_str()) {
+                pkg.add_config_with(dest, file, opts);
+            } else {
+                pkg.add_file_with(dest, file, opts);
+            }
         }
 
         let mut out = File::create(out_file)?;
@@ -921,6 +1008,21 @@ impl BuildFile {
         &self.var_makedepends
     }
 
+    /// Get the package's SPDX license expression.
+    pub fn license(&self) -> Option<&str> {
+        self.var_license.as_deref()
+    }
+
+    /// Get the package's backup/conffiles paths.
+    pub fn backup(&self) -> &[String] {
+        &self.var_backup
+    }
+
+    /// Get the package's maintainer.
+    pub fn maintainer(&self) -> Option<&str> {
+        self.var_maintainer.as_deref()
+    }
+
     /// Get the source entries for a given target arch.
     ///
     /// Returns `source_$ARCH` if defined, otherwise falls back to `source`.
@@ -974,6 +1076,8 @@ pub mod vars {
     pub const PKGDESC: &str = "pkgdesc";
     pub const DEPENDS: &str = "depends";
     pub const MAKEDEPENDS: &str = "makedepends";
+    pub const LICENSE: &str = "license";
+    pub const BACKUP: &str = "backup";
     pub const SOURCE: &str = "source";
 }
 

@@ -22,7 +22,9 @@ md-5 = { workspace = true }
 nix = { workspace = true }
 repology = { workspace = true }
 reqwest = { workspace = true }
+mailparse = { workspace = true }
 rfpm = { workspace = true }
+spdx = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

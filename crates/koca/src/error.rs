@@ -40,6 +40,15 @@ pub enum KocaParserError {
     /// An invalid string was specified for an architecture.
     #[error("'{0}' is not a valid architecture")]
     InvalidArch(String),
+    /// An invalid SPDX license expression.
+    #[error("'{0}' is not a valid SPDX license expression: {1}")]
+    InvalidLicense(String, String),
+    /// A backup path that isn't absolute.
+    #[error("backup path '{0}' must be an absolute path (start with '/')")]
+    InvalidBackupPath(String),
+    /// An invalid maintainer string.
+    #[error("'{0}' is not a valid maintainer (expected 'Name <email>'): {1}")]
+    InvalidMaintainer(String, String),
     /// A required variable was not defined.
     #[error("the variable '{0}' was not defined")]
     MissingRequiredVariable(String),
