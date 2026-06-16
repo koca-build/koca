@@ -90,6 +90,8 @@ jobs:
         with:
           pattern: packages-*
 
+      - uses: actions/checkout@v4
+
       - name: Upload assets and publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -101,5 +103,5 @@ jobs:
             arch="${dir#binary-}"
             mv "$dir/koca-linux-${arch}" "koca-linux-${arch}"
           done
-          gh release upload "$TAG" koca-linux-x64 koca-linux-arm64 packages-*/*
+          gh release upload "$TAG" koca-linux-x64 koca-linux-arm64 packages-*/* koca.koca
           gh release edit "$TAG" --draft=false

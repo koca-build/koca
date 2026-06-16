@@ -3,15 +3,16 @@ pkgname=koca
 pkgver=0.7.0
 pkgrel=1
 pkgdesc='A modern, universal, and system-native package manager'
-arch=('any')
+arch=('x86_64' 'aarch64')
 
 build() {
-    git_dir="$(git rev-parse --show-toplevel)"
-
     if [[ -d "${pkgname}/" ]]; then
-        git -C "${pkgname}" pull
+        git -C "${pkgname}" fetch --all
+        git -C "${pkgname}" checkout "v${pkgver}"
+    elif git remote get-url origin 2>/dev/null | grep -qE '[:/]koca-build/koca(\.git)?$'; then
+        git clone "$(git rev-parse --show-toplevel)" "${pkgname}/"
     else
-        git clone "${git_dir}" "${pkgname}/"
+        git clone --depth 1 --branch "v${pkgver}" https://github.com/koca-build/koca "${pkgname}/"
     fi
 
     cd "${pkgname}/"
