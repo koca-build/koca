@@ -151,6 +151,31 @@ async fn fetch_http(
     Ok(())
 }
 
+/// Init an empty repo at `dest` and shallow-fetch `refspec` from `url` into it.
+fn init_and_fetch(
+    dest: &Path,
+    url: &str,
+    refspec: &str,
+    fo: &mut git2::FetchOptions,
+) -> Result<git2::Repository, String> {
+    let repo = git2::Repository::init(dest).map_err(|e| e.message().to_string())?;
+    repo.remote("origin", url)
+        .map_err(|e| e.message().to_string())?
+        .fetch(&[refspec], Some(fo), None)
+        .map_err(|e| e.message().to_string())?;
+    Ok(repo)
+}
+
+/// Detached-checkout `oid` in `repo`, surfacing git errors as strings.
+fn checkout_oid(repo: &git2::Repository, oid: git2::Oid) -> Result<(), String> {
+    let commit = repo.find_commit(oid).map_err(|e| e.message().to_string())?;
+    repo.checkout_tree(commit.as_object(), None)
+        .map_err(|e| e.message().to_string())?;
+    repo.set_head_detached(oid)
+        .map_err(|e| e.message().to_string())?;
+    Ok(())
+}
+
 async fn fetch_git(
     url: &str,
     reference: Option<&GitRef>,
@@ -190,42 +215,50 @@ async fn fetch_git(
         fo.remote_callbacks(cb);
         fo.depth(1);
 
-        if let Some(GitRef::Commit(ref hash)) = reference {
-            let result = (|| -> Result<(), String> {
-                let repo = git2::Repository::init(&dest).map_err(|e| e.message().to_string())?;
-                let mut remote = repo
-                    .remote("origin", &url)
-                    .map_err(|e| e.message().to_string())?;
-                remote
-                    .fetch(&[hash.as_str()], Some(&mut fo), None)
-                    .map_err(|e| e.message().to_string())?;
-                let oid = git2::Oid::from_str(hash).map_err(|e| e.message().to_string())?;
-                let commit = repo.find_commit(oid).map_err(|e| e.message().to_string())?;
-                repo.checkout_tree(commit.as_object(), None)
-                    .map_err(|e| e.message().to_string())?;
-                repo.set_head_detached(oid)
-                    .map_err(|e| e.message().to_string())?;
-                Ok(())
-            })();
-            if result.is_err() {
-                let _ = std::fs::remove_dir_all(&dest);
-                return result;
-            }
-        } else {
-            let mut builder = git2::build::RepoBuilder::new();
-            builder.fetch_options(fo);
+        let result = (|| -> Result<(), String> {
             match &reference {
-                Some(GitRef::Branch(b)) => {
-                    builder.branch(b);
+                // A bare commit hash: init an empty repo and fetch exactly that
+                // object, then detach onto it.
+                Some(GitRef::Commit(hash)) => {
+                    let repo = init_and_fetch(&dest, &url, hash, &mut fo)?;
+                    let oid = git2::Oid::from_str(hash).map_err(|e| e.message().to_string())?;
+                    checkout_oid(&repo, oid)
                 }
-                Some(GitRef::Tag(t)) => {
-                    builder.branch(t);
+                // A tag: RepoBuilder won't materialise a tag under a shallow
+                // (depth=1) fetch -- its default refspec only follows
+                // refs/heads/*, so the tag ref is never written and the
+                // checkout fails. Fetch the tag ref explicitly instead, then
+                // peel it (tags may be annotated) to the commit and detach.
+                Some(GitRef::Tag(tag)) => {
+                    let tag_ref = format!("refs/tags/{tag}");
+                    let repo =
+                        init_and_fetch(&dest, &url, &format!("+{tag_ref}:{tag_ref}"), &mut fo)?;
+                    let oid = repo
+                        .find_reference(&tag_ref)
+                        .and_then(|r| r.peel_to_commit())
+                        .map_err(|e| e.message().to_string())?
+                        .id();
+                    checkout_oid(&repo, oid)
                 }
-                _ => {}
+                // A branch or the default branch: RepoBuilder checks out a real
+                // branch correctly, so let it drive the clone.
+                other => {
+                    let mut builder = git2::build::RepoBuilder::new();
+                    builder.fetch_options(fo);
+                    if let Some(GitRef::Branch(b)) = other {
+                        builder.branch(b);
+                    }
+                    builder
+                        .clone(&url, &dest)
+                        .map_err(|e| e.message().to_string())?;
+                    Ok(())
+                }
             }
-            builder
-                .clone(&url, &dest)
-                .map_err(|e| e.message().to_string())?;
+        })();
+
+        if result.is_err() {
+            let _ = std::fs::remove_dir_all(&dest);
+            return result;
         }
         progress.lock().unwrap()[index].done = true;
         Ok(())
