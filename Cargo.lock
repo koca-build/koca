@@ -3290,9 +3290,9 @@ dependencies = [
 
 [[package]]
 name = "rfpm"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67145930aa679ad460fa13bd2e36f95b4ba648bf3a0693b10d6c7d4f08dbe07f"
+checksum = "5992fae56c362957d33468ba04c3aced001c9150edc453024d5f509fcfb58620"
 dependencies = [
  "ar",
  "flate2",
