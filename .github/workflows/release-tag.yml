@@ -14,6 +14,11 @@ concurrency:
   group: release-tag-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+  CARGO_INCREMENTAL: "0"
+
 jobs:
   release-tag:
     name: Release tag
@@ -26,7 +31,7 @@ jobs:
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: mozilla-actions/sccache-action@v0.0.10
       - id: release-plz
         uses: release-plz/action@v0.5
         with:
@@ -50,9 +55,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: release-${{ matrix.arch }}
+      - uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Install build dependencies
         run: |
