@@ -107,5 +107,7 @@ jobs:
             arch="${dir#binary-}"
             mv "$dir/koca-linux-${arch}" "koca-linux-${arch}"
           done
-          gh release upload "$TAG" koca-linux-x64 koca-linux-arm64 packages-*/* koca.koca --clobber
+          for asset in koca-linux-x64 koca-linux-arm64 packages-*/* koca.koca; do
+            gh release upload "$TAG" "$asset" --clobber
+          done
           gh release edit "$TAG" --draft=false
