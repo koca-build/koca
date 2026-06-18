@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  SCCACHE_GHA_ENABLED: "true"
+  SCCACHE_DIR: ${{ github.workspace }}/.sccache
   RUSTC_WRAPPER: "sccache"
   CARGO_INCREMENTAL: "0"
 
@@ -55,6 +55,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.sccache
+          key: sccache-build-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            sccache-build-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}-
+            sccache-build-${{ matrix.arch }}-
       - uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Install build dependencies

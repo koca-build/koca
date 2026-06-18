@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 env:
-  SCCACHE_GHA_ENABLED: "true"
+  SCCACHE_DIR: ${{ github.workspace }}/.sccache
   RUSTC_WRAPPER: "sccache"
   CARGO_INCREMENTAL: "0"
 
@@ -19,6 +19,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.sccache
+          key: sccache-publish-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            sccache-publish-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}-
+            sccache-publish-${{ runner.os }}-${{ runner.arch }}-
       - uses: mozilla-actions/sccache-action@v0.0.10
       - run: cargo publish --locked --package koca
         env:

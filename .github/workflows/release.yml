@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  SCCACHE_GHA_ENABLED: "true"
+  SCCACHE_DIR: ${{ github.workspace }}/.sccache
   RUSTC_WRAPPER: "sccache"
   CARGO_INCREMENTAL: "0"
 
