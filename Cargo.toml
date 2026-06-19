@@ -20,7 +20,7 @@ directories = "6.0.0"
 flate2 = "1.1.2"
 git2 = { version = "0.20", features = ["vendored-libgit2", "vendored-openssl"] }
 koca = { path = "crates/koca", version = "0.7.1" }
-rfpm = "0.2.2"
+rfpm = "0.2.4"
 spdx = "0.13.4"
 mailparse = "0.16.1"
 semver = "1.0.26"
