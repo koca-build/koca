@@ -918,35 +918,26 @@ impl BuildFile {
         let backup_set: std::collections::HashSet<&str> =
             self.var_backup.iter().map(|p| p.as_str()).collect();
 
-        for res_entry in WalkDir::new(&pkg_dir) {
-            let entry = res_entry.map_err(|e| std::io::Error::other(e.to_string()))?;
-            if entry.file_type().is_dir() {
-                continue;
-            }
-
-            let src_path =
-                path::absolute(entry.path()).expect("getting absolute path should always succeed");
-            let dst_path = entry
-                .path()
-                .strip_prefix(&pkg_dir)
-                .expect("pkgdir strip should always succeed");
-
-            let metadata = entry
-                .metadata()
-                .expect("file metadata should always be readable");
-            let mode = metadata.mode() & 0o7777;
-
-            let dest = format!("/{}", dst_path.display());
-            let file = File::open(&src_path)?;
-            let opts = rfpm::FileOptions {
-                mode,
-                ..Default::default()
-            };
-
-            if backup_set.contains(dest.as_str()) {
-                pkg.add_config_with(dest, file, opts);
-            } else {
-                pkg.add_file_with(dest, file, opts);
+        for entry in collect_pkg_entries(Path::new(&pkg_dir), &backup_set)? {
+            match entry {
+                PkgEntry::Symlink { src, target } => pkg.add_symlink(src, target),
+                PkgEntry::File {
+                    dest,
+                    src,
+                    mode,
+                    config,
+                } => {
+                    let file = File::open(&src)?;
+                    let opts = rfpm::FileOptions {
+                        mode,
+                        ..Default::default()
+                    };
+                    if config {
+                        pkg.add_config_with(dest, file, opts);
+                    } else {
+                        pkg.add_file_with(dest, file, opts);
+                    }
+                }
             }
         }
 
@@ -1097,5 +1088,126 @@ mod dirs {
     /// Return the package directory for a named sub-package.
     pub fn pkg_for(name: &str) -> String {
         format!("koca-build/pkg/{name}")
+    }
+}
+
+/// A package payload entry discovered by walking a built `$pkgdir`.
+enum PkgEntry {
+    /// A regular file to copy from `src` into the package at `dest`.
+    File {
+        dest: String,
+        src: path::PathBuf,
+        mode: u32,
+        config: bool,
+    },
+    /// A symlink at `src` pointing to `target`, stored verbatim (not followed).
+    Symlink { src: String, target: String },
+}
+
+/// Walk a built package directory into a flat list of payload entries.
+///
+/// Symlinks are recorded as links (never dereferenced) so they survive into the
+/// package; everything else is a file, marked `config` when listed in `backup`.
+fn collect_pkg_entries(
+    pkg_dir: &Path,
+    backup_set: &std::collections::HashSet<&str>,
+) -> KocaResult<Vec<PkgEntry>> {
+    let mut entries = Vec::new();
+    for res_entry in WalkDir::new(pkg_dir) {
+        let entry = res_entry.map_err(|e| std::io::Error::other(e.to_string()))?;
+        let file_type = entry.file_type();
+        if file_type.is_dir() {
+            continue;
+        }
+
+        let dst_path = entry
+            .path()
+            .strip_prefix(pkg_dir)
+            .expect("pkgdir strip should always succeed");
+        let dest = format!("/{}", dst_path.display());
+
+        if file_type.is_symlink() {
+            // WalkDir does not follow symlinks, so read_link yields the raw
+            // target; opening it would dereference (and fail on absolute or
+            // dangling targets).
+            let target = fs::read_link(entry.path())?;
+            entries.push(PkgEntry::Symlink {
+                src: dest,
+                target: target.to_string_lossy().into_owned(),
+            });
+            continue;
+        }
+
+        let src =
+            path::absolute(entry.path()).expect("getting absolute path should always succeed");
+        let mode = entry
+            .metadata()
+            .expect("file metadata should always be readable")
+            .mode()
+            & 0o7777;
+        let config = backup_set.contains(dest.as_str());
+        entries.push(PkgEntry::File {
+            dest,
+            src,
+            mode,
+            config,
+        });
+    }
+    Ok(entries)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{collect_pkg_entries, PkgEntry};
+    use std::collections::HashSet;
+
+    #[test]
+    fn collects_symlinks_as_links_not_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("usr/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("foo"), b"payload").unwrap();
+        // Absolute target that does not exist on the host — opening it would fail.
+        std::os::unix::fs::symlink("/usr/bin/foo", bin.join("bar")).unwrap();
+
+        let backup = HashSet::new();
+        let entries = collect_pkg_entries(dir.path(), &backup).unwrap();
+
+        let target = entries.iter().find_map(|e| match e {
+            PkgEntry::Symlink { src, target } if src == "/usr/bin/bar" => Some(target.clone()),
+            _ => None,
+        });
+        assert_eq!(
+            target.as_deref(),
+            Some("/usr/bin/foo"),
+            "symlink recorded as a link with its raw target"
+        );
+
+        let foo_is_file = entries
+            .iter()
+            .any(|e| matches!(e, PkgEntry::File { dest, .. } if dest == "/usr/bin/foo"));
+        assert!(foo_is_file, "regular file recorded as a file");
+
+        let bar_as_file = entries
+            .iter()
+            .any(|e| matches!(e, PkgEntry::File { dest, .. } if dest == "/usr/bin/bar"));
+        assert!(!bar_as_file, "symlink not dereferenced into a file");
+    }
+
+    #[test]
+    fn marks_backup_paths_as_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let etc = dir.path().join("etc");
+        std::fs::create_dir_all(&etc).unwrap();
+        std::fs::write(etc.join("app.conf"), b"x").unwrap();
+
+        let backup: HashSet<&str> = ["/etc/app.conf"].into_iter().collect();
+        let entries = collect_pkg_entries(dir.path(), &backup).unwrap();
+
+        let config = entries.iter().find_map(|e| match e {
+            PkgEntry::File { dest, config, .. } if dest == "/etc/app.conf" => Some(*config),
+            _ => None,
+        });
+        assert_eq!(config, Some(true), "backup path marked as config");
     }
 }

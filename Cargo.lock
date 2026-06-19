@@ -1599,6 +1599,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hermit-abi"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
+
+[[package]]
 name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2173,6 +2179,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a631d2b24be269775ba8f7789a6afa1ac228346a20c9e87dbbbe4975a79fd764"
 dependencies = [
  "liblzma-sys",
+ "num_cpus",
 ]
 
 [[package]]
@@ -2500,6 +2507,16 @@ checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
  "libm",
+]
+
+[[package]]
+name = "num_cpus"
+version = "1.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91df4bbde75afed763b708b7eee1e8e7651e02d97f6d5dd763e89367e957b23b"
+dependencies = [
+ "hermit-abi",
+ "libc",
 ]
 
 [[package]]
@@ -3290,9 +3307,9 @@ dependencies = [
 
 [[package]]
 name = "rfpm"
-version = "0.2.2"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5992fae56c362957d33468ba04c3aced001c9150edc453024d5f509fcfb58620"
+checksum = "4c8974d6ed67a9edb31401df7484d03800530c41502fa86d8d1c4a610d94f314"
 dependencies = [
  "ar",
  "flate2",
