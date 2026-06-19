@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2](https://github.com/koca-build/koca/compare/v0.7.1...v0.7.2) - 2026-06-19
+
+### Added
+
+- preserve symlinks in package payloads ([#58](https://github.com/koca-build/koca/pull/58))
+
 ## [0.7.1](https://github.com/koca-build/koca/compare/v0.7.0...v0.7.1) - 2026-06-17
 
 ### Fixed
