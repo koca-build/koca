@@ -132,10 +132,14 @@ pub struct BuildFile {
     var_arch: Vec<Arch>,
     /// The package's description.
     var_pkgdesc: String,
-    /// The package's runtime dependencies (repology project names + optional version constraints).
-    var_depends: Vec<crate::dep::DepConstraint>,
-    /// The package's build-time dependencies (repology project names + optional version constraints).
-    var_makedepends: Vec<crate::dep::DepConstraint>,
+    /// The package's runtime dependencies.
+    var_depends: Vec<rfpm::relation::Relation>,
+    /// The package's build-time dependencies (only the name is used at build time).
+    var_makedepends: Vec<rfpm::relation::Relation>,
+    /// Virtual packages this package provides.
+    var_provides: Vec<rfpm::relation::VirtualPackage>,
+    /// Packages this package conflicts with.
+    var_conflicts: Vec<rfpm::relation::Relation>,
     /// The package's source entries, keyed by arch (None = base `source=()`).
     var_source: HashMap<Option<Arch>, Vec<crate::source::Source>>,
     /// The package's SPDX license expression (optional).
@@ -302,18 +306,39 @@ impl BuildFile {
         Ok(result)
     }
 
-    /// Parse a string array into `Vec<DepConstraint>`, propagating parse errors.
-    fn parse_dep_array(
+    /// Parse a string array into `Vec<Relation>`, propagating parse errors.
+    fn parse_relation_array(
         var_name: &str,
         value: &DeclValue,
-    ) -> KocaMultiResult<Vec<crate::dep::DepConstraint>> {
+    ) -> KocaMultiResult<Vec<rfpm::relation::Relation>> {
         let strings = Self::parse_string_array(var_name, value)?;
         let mut errs = vec![];
         let mut result = vec![];
         for s in strings {
-            match crate::dep::DepConstraint::parse(&s) {
-                Ok(dep) => result.push(dep),
-                Err(err) => errs.push(err),
+            match rfpm::relation::Relation::parse(&s) {
+                Ok(rel) => result.push(rel),
+                Err(err) => errs.push(KocaError::InvalidRelation(s, err.to_string())),
+            }
+        }
+        if !errs.is_empty() {
+            return Err(errs);
+        }
+        Ok(result)
+    }
+
+    /// Parse a string array into `Vec<VirtualPackage>` (for `provides`),
+    /// propagating parse errors.
+    fn parse_virtual_array(
+        var_name: &str,
+        value: &DeclValue,
+    ) -> KocaMultiResult<Vec<rfpm::relation::VirtualPackage>> {
+        let strings = Self::parse_string_array(var_name, value)?;
+        let mut errs = vec![];
+        let mut result = vec![];
+        for s in strings {
+            match rfpm::relation::VirtualPackage::parse(&s) {
+                Ok(prov) => result.push(prov),
+                Err(err) => errs.push(KocaError::InvalidRelation(s, err.to_string())),
             }
         }
         if !errs.is_empty() {
@@ -419,8 +444,10 @@ impl BuildFile {
         let mut opt_epoch: Option<String> = None;
         let mut opt_arch: Option<Vec<Arch>> = None;
         let mut opt_pkgdesc: Option<String> = None;
-        let mut opt_depends: Vec<crate::dep::DepConstraint> = vec![];
-        let mut opt_makedepends: Vec<crate::dep::DepConstraint> = vec![];
+        let mut opt_depends: Vec<rfpm::relation::Relation> = vec![];
+        let mut opt_makedepends: Vec<rfpm::relation::Relation> = vec![];
+        let mut opt_provides: Vec<rfpm::relation::VirtualPackage> = vec![];
+        let mut opt_conflicts: Vec<rfpm::relation::Relation> = vec![];
         let mut opt_source: HashMap<Option<Arch>, Vec<crate::source::Source>> = HashMap::new();
         let mut opt_license: Option<String> = None;
         let mut opt_backup: Vec<String> = vec![];
@@ -477,13 +504,21 @@ impl BuildFile {
                     Ok(pkgdesc) => opt_pkgdesc = Some(pkgdesc),
                     Err(err) => errs.push(err),
                 },
-                vars::DEPENDS => match Self::parse_dep_array(vars::DEPENDS, value) {
+                vars::DEPENDS => match Self::parse_relation_array(vars::DEPENDS, value) {
                     Ok(depends) => opt_depends = depends,
                     Err(dep_errs) => errs.extend(dep_errs),
                 },
-                vars::MAKEDEPENDS => match Self::parse_dep_array(vars::MAKEDEPENDS, value) {
+                vars::MAKEDEPENDS => match Self::parse_relation_array(vars::MAKEDEPENDS, value) {
                     Ok(makedepends) => opt_makedepends = makedepends,
                     Err(dep_errs) => errs.extend(dep_errs),
+                },
+                vars::PROVIDES => match Self::parse_virtual_array(vars::PROVIDES, value) {
+                    Ok(provides) => opt_provides = provides,
+                    Err(prov_errs) => errs.extend(prov_errs),
+                },
+                vars::CONFLICTS => match Self::parse_relation_array(vars::CONFLICTS, value) {
+                    Ok(conflicts) => opt_conflicts = conflicts,
+                    Err(conf_errs) => errs.extend(conf_errs),
                 },
                 vars::LICENSE => match Self::parse_license(value) {
                     Ok(license) => opt_license = Some(license),
@@ -683,6 +718,8 @@ impl BuildFile {
             var_pkgdesc: opt_pkgdesc.expect("pkgdesc should be set"),
             var_depends: opt_depends,
             var_makedepends: opt_makedepends,
+            var_provides: opt_provides,
+            var_conflicts: opt_conflicts,
             var_source: opt_source,
             var_license: opt_license,
             var_backup: opt_backup,
@@ -912,7 +949,9 @@ impl BuildFile {
         pkg.epoch = self.var_version.epoch;
         pkg.maintainer = self.var_maintainer.clone();
         pkg.license = self.var_license.clone();
-        pkg.depends = self.var_depends.iter().map(|d| d.to_string()).collect();
+        pkg.depends = self.var_depends.clone();
+        pkg.provides = self.var_provides.clone();
+        pkg.conflicts = self.var_conflicts.clone();
 
         // Walk the package directory and add files. Ownership defaults to root:root.
         let backup_set: std::collections::HashSet<&str> =
@@ -984,8 +1023,8 @@ impl BuildFile {
         &self.var_pkgdesc
     }
 
-    /// Get the package's runtime dependency constraints.
-    pub fn depends(&self) -> &[crate::dep::DepConstraint] {
+    /// Get the package's runtime dependencies.
+    pub fn depends(&self) -> &[rfpm::relation::Relation] {
         &self.var_depends
     }
 
@@ -994,9 +1033,19 @@ impl BuildFile {
         self.build_func.is_some()
     }
 
-    /// Get the package's build-time dependency constraints.
-    pub fn makedepends(&self) -> &[crate::dep::DepConstraint] {
+    /// Get the package's build-time dependencies.
+    pub fn makedepends(&self) -> &[rfpm::relation::Relation] {
         &self.var_makedepends
+    }
+
+    /// Get the virtual packages this package provides.
+    pub fn provides(&self) -> &[rfpm::relation::VirtualPackage] {
+        &self.var_provides
+    }
+
+    /// Get the packages this package conflicts with.
+    pub fn conflicts(&self) -> &[rfpm::relation::Relation] {
+        &self.var_conflicts
     }
 
     /// Get the package's SPDX license expression.
@@ -1067,6 +1116,8 @@ pub mod vars {
     pub const PKGDESC: &str = "pkgdesc";
     pub const DEPENDS: &str = "depends";
     pub const MAKEDEPENDS: &str = "makedepends";
+    pub const PROVIDES: &str = "provides";
+    pub const CONFLICTS: &str = "conflicts";
     pub const LICENSE: &str = "license";
     pub const BACKUP: &str = "backup";
     pub const SOURCE: &str = "source";

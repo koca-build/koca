@@ -4,11 +4,10 @@
 #![allow(clippy::result_large_err)]
 
 pub mod backend;
-pub mod dep;
 pub mod distro;
 mod error;
 mod file;
-pub mod resolve;
 pub mod source;
 pub use error::*;
 pub use file::*;
+pub use rfpm;

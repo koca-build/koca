@@ -39,28 +39,6 @@ impl Distro {
         Ok(Self { id, version_id })
     }
 
-    /// Returns the repology repository name for this distro.
-    ///
-    /// Examples: `"arch"`, `"debian_12"`, `"ubuntu_24_04"`
-    pub fn repology_repo(&self) -> String {
-        match self.id.as_str() {
-            "arch" | "manjaro" | "endeavouros" | "garuda" => "arch".into(),
-            "debian" => {
-                let ver = self.version_id.as_deref().unwrap_or("").replace('.', "_");
-                format!("debian_{ver}")
-            }
-            "ubuntu" => {
-                let ver = self.version_id.as_deref().unwrap_or("").replace('.', "_");
-                format!("ubuntu_{ver}")
-            }
-            "fedora" => {
-                let ver = self.version_id.as_deref().unwrap_or("");
-                format!("fedora_{ver}")
-            }
-            other => other.to_string(),
-        }
-    }
-
     /// Returns the backend kind to use for this distro.
     pub fn backend_kind(&self) -> BackendKind {
         match self.id.as_str() {
@@ -107,21 +85,22 @@ mod tests {
     fn parse_arch() {
         let d = Distro::parse_os_release("ID=arch\n").unwrap();
         assert_eq!(d.id, "arch");
-        assert_eq!(d.repology_repo(), "arch");
         assert!(matches!(d.backend_kind(), BackendKind::Alpm));
     }
 
     #[test]
     fn parse_debian_quoted() {
         let d = Distro::parse_os_release("ID=debian\nVERSION_ID=\"12\"\n").unwrap();
-        assert_eq!(d.repology_repo(), "debian_12");
+        assert_eq!(d.id, "debian");
+        assert_eq!(d.version_id.as_deref(), Some("12"));
         assert!(matches!(d.backend_kind(), BackendKind::Apt));
     }
 
     #[test]
     fn parse_ubuntu() {
         let d = Distro::parse_os_release("ID=ubuntu\nVERSION_ID=\"24.04\"\n").unwrap();
-        assert_eq!(d.repology_repo(), "ubuntu_24_04");
+        assert_eq!(d.id, "ubuntu");
+        assert_eq!(d.version_id.as_deref(), Some("24.04"));
     }
 
     #[test]

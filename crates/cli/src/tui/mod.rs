@@ -1,7 +1,7 @@
 mod ui;
 
 use koca::backend::{Event, PlannedAction};
-use koca::dep::DepConstraint;
+use koca::rfpm::relation::Relation;
 pub use koca::source::SourceProgress;
 use std::io;
 
@@ -19,7 +19,7 @@ pub trait CreateUi {
     fn show_confirm(
         &mut self,
         actions: &[PlannedAction],
-        depends: &[DepConstraint],
+        depends: &[Relation],
         noconfirm: bool,
     ) -> io::Result<bool>;
 

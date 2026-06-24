@@ -1,0 +1,11 @@
+# Maintainer: Test <test@example.com>
+pkgname=testpkg
+pkgver=1.0.0
+pkgrel=1
+arch=('x86_64')
+pkgdesc='Fixture: provides with an invalid range operator'
+provides=('bun>=1.0')
+
+package() {
+    true
+}

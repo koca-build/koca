@@ -1,0 +1,13 @@
+# Maintainer: Test <test@example.com>
+pkgname=testpkg
+pkgver=1.0.0
+pkgrel=1
+arch=('x86_64')
+pkgdesc='Fixture exercising relationship fields'
+depends=('libc6' 'openssl>=3.0')
+provides=('bun' 'cron=2.0')
+conflicts=('oldpkg<5')
+
+package() {
+    true
+}

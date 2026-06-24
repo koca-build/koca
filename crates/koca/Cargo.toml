@@ -20,7 +20,6 @@ itertools = "0.14.0"
 libversion = { workspace = true }
 md-5 = { workspace = true }
 nix = { workspace = true }
-repology = { workspace = true }
 reqwest = { workspace = true }
 mailparse = { workspace = true }
 rfpm = { workspace = true }
@@ -35,3 +34,6 @@ tempfile = "3.27.0"
 thiserror = { workspace = true }
 tokio = { workspace = true }
 walkdir = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
