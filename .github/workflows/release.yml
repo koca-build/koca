@@ -13,8 +13,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  SCCACHE_DIR: ${{ github.workspace }}/.sccache
-  RUSTC_WRAPPER: "sccache"
+  # Standardized target dir across all koca workflows; matches the path
+  # Swatinem/rust-cache globs (<workspace>/target) by default. See
+  # release-tag.yml for why this also matters for koca's nested build.
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
   CARGO_INCREMENTAL: "0"
 
 jobs:
@@ -29,7 +31,7 @@ jobs:
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
-      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: Swatinem/rust-cache@v2
       - id: release-plz
         uses: release-plz/action@v0.5
         with:

@@ -8,8 +8,10 @@ permissions:
   contents: read
 
 env:
-  SCCACHE_DIR: ${{ github.workspace }}/.sccache
-  RUSTC_WRAPPER: "sccache"
+  # Standardized target dir across all koca workflows; matches the path
+  # Swatinem/rust-cache globs (<workspace>/target) by default. See
+  # release-tag.yml for why this also matters for koca's nested build.
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
   CARGO_INCREMENTAL: "0"
 
 jobs:
@@ -19,14 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/.sccache
-          key: sccache-publish-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
-          restore-keys: |
-            sccache-publish-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}-
-            sccache-publish-${{ runner.os }}-${{ runner.arch }}-
-      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: Swatinem/rust-cache@v2
       - run: cargo publish --locked --package koca
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

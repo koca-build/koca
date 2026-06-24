@@ -15,8 +15,12 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  SCCACHE_DIR: ${{ github.workspace }}/.sccache
-  RUSTC_WRAPPER: "sccache"
+  # Pin a single target dir for every cargo invocation. koca shells out to
+  # `cargo build` for its own package, and since it inherits this env var that
+  # nested build lands here too instead of koca-build/src/koca/target. One
+  # shared tree means deps compile once and Swatinem/rust-cache (which globs
+  # <workspace>/target by default) actually caches the package build.
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
   CARGO_INCREMENTAL: "0"
 
 jobs:
@@ -31,7 +35,7 @@ jobs:
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
-      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: Swatinem/rust-cache@v2
       - id: release-plz
         uses: release-plz/action@v0.5
         with:
@@ -55,14 +59,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/.sccache
-          key: sccache-build-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
-          restore-keys: |
-            sccache-build-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}-
-            sccache-build-${{ matrix.arch }}-
-      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: Swatinem/rust-cache@v2
 
       - name: Install build dependencies
         run: |
@@ -73,7 +70,8 @@ jobs:
         run: cargo run --locked --bin koca -- create koca.koca --output-type all --noconfirm
 
       - name: Collect binary
-        run: cp "koca-build/src/koca/target/$(uname -m)-unknown-linux-musl/release/koca" "koca-linux-${{ matrix.arch }}"
+        # Built into the shared CARGO_TARGET_DIR (see env above).
+        run: cp "${CARGO_TARGET_DIR}/$(uname -m)-unknown-linux-musl/release/koca" "koca-linux-${{ matrix.arch }}"
 
       - uses: actions/upload-artifact@v4
         with:
