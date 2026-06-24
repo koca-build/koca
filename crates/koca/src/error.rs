@@ -75,9 +75,9 @@ pub enum KocaError {
     /// An error occurred while executing a Koca build file function.
     #[error("failed to execute function '{0}'")]
     FuncError(KocaFunction),
-    /// An invalid dependency constraint string.
-    #[error("invalid dependency constraint: '{0}'")]
-    InvalidDep(String),
+    /// An invalid relationship string (`depends`, `conflicts`, `provides`, ...).
+    #[error("invalid relationship '{0}': {1}")]
+    InvalidRelation(String, String),
     /// An invalid source entry.
     #[error("invalid source: {0}")]
     InvalidSource(String),

@@ -68,15 +68,9 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
     let installed_count: u32;
 
     if !makedepends.is_empty() || !depends.is_empty() {
-        // Use dep names directly as native package names (no repology lookup).
         let makedep_natives: Vec<String> = makedepends.iter().map(|d| d.name.clone()).collect();
 
         if !makedep_natives.is_empty() {
-            // Build a map from native package name → original constraint for
-            // version satisfaction checks.
-            let native_to_constraint: std::collections::HashMap<&str, &koca::dep::DepConstraint> =
-                makedepends.iter().map(|d| (d.name.as_str(), d)).collect();
-
             ui.start_resolve()?;
             let mut resolve_ticker = tokio::time::interval(std::time::Duration::from_millis(80));
             resolve_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -101,20 +95,11 @@ async fn run_inner(args: &CreateArgs, ui: &mut dyn CreateUi) -> CliMultiResult<(
                 _ => unreachable!(),
             };
 
+            // Hand the missing names to the native resolver (apt/alpm), which
+            // does the actual dependency and version resolution.
             let missing: Vec<String> = statuses
                 .iter()
-                .filter(|s| {
-                    if s.status == InstalledStatus::Missing {
-                        return true;
-                    }
-                    // Installed — check if the version satisfies the constraint.
-                    if let (Some(ver), Some(constraint)) =
-                        (&s.version, native_to_constraint.get(s.name.as_str()))
-                    {
-                        return !constraint.satisfied_by(ver);
-                    }
-                    false
-                })
+                .filter(|s| s.status == InstalledStatus::Missing)
                 .map(|s| s.name.clone())
                 .collect();
 

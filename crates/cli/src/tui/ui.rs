@@ -2,7 +2,7 @@ use std::io::{self, Write};
 
 use crossterm::{cursor, execute, terminal};
 use koca::backend::{ActionKind, DownloadEvent, Event, InstallEvent, PlannedAction, RemoveEvent};
-use koca::dep::DepConstraint;
+use koca::rfpm::relation::Relation;
 use koca::source::{format_bytes, SourceProgress};
 use zolt::Colorize;
 
@@ -415,7 +415,7 @@ impl CreateUi for KocaCreateUi {
     fn show_confirm(
         &mut self,
         actions: &[PlannedAction],
-        _depends: &[DepConstraint],
+        _depends: &[Relation],
         noconfirm: bool,
     ) -> io::Result<bool> {
         // Group by action type.

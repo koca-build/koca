@@ -20,14 +20,13 @@ directories = "6.0.0"
 flate2 = "1.1.2"
 git2 = { version = "0.20", features = ["vendored-libgit2", "vendored-openssl"] }
 koca = { path = "crates/koca", version = "0.7.2" }
-rfpm = "0.2.4"
+rfpm = "0.3.0"
 spdx = "0.13.4"
 mailparse = "0.16.1"
 semver = "1.0.26"
 thiserror = "2.0.12"
 tar = "0.4.44"
 tokio = { version = "1.45.0", features = ["full"] }
-repology = "0.1.1"
 zolt = "0.7.2"
 regex = "1.11.1"
 reqwest = { version = "0.12.19", default-features = false, features = [
