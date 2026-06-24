@@ -24,5 +24,6 @@ build() {
 package() {
     cd "${pkgname}/"
     target="$(uname -m)-unknown-linux-musl"
-    install -Dm 755 "target/${target}/release/koca" "${pkgdir}/usr/bin/koca"
+    target_dir="$(cargo metadata --format-version 1 --no-deps | jq -r '.target_directory')"
+    install -Dm 755 "${target_dir}/${target}/release/koca" "${pkgdir}/usr/bin/koca"
 }

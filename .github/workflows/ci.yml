@@ -10,8 +10,10 @@ permissions:
   contents: read
 
 env:
-  SCCACHE_DIR: ${{ github.workspace }}/.sccache
-  RUSTC_WRAPPER: "sccache"
+  # Standardized target dir across all koca workflows; matches the path
+  # Swatinem/rust-cache globs (<workspace>/target) by default. See
+  # release-tag.yml for why this also matters for koca's nested build.
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
   CARGO_INCREMENTAL: "0"
 
 jobs:
@@ -23,7 +25,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - uses: mozilla-actions/sccache-action@v0.0.10
       - run: cargo fmt --all --check
 
   clippy:
@@ -34,14 +35,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/.sccache
-          key: sccache-clippy-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
-          restore-keys: |
-            sccache-clippy-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}-
-            sccache-clippy-${{ runner.os }}-${{ runner.arch }}-
-      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets -- -Dwarnings
 
   test:
@@ -50,12 +44,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/.sccache
-          key: sccache-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
-          restore-keys: |
-            sccache-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}-
-            sccache-test-${{ runner.os }}-${{ runner.arch }}-
-      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: Swatinem/rust-cache@v2
       - run: cargo test
