@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, ValueEnum};
 use koca::BundleFormat;
 use std::path::PathBuf;
 
@@ -13,14 +13,6 @@ pub enum OutputType {
 }
 
 impl OutputType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Deb => "deb",
-            Self::Rpm => "rpm",
-            Self::All => "all",
-        }
-    }
-
     pub fn bundle_formats(&self) -> Vec<BundleFormat> {
         match self {
             Self::Deb => vec![BundleFormat::Deb],
@@ -50,41 +42,7 @@ pub struct CreateArgs {
 }
 
 #[derive(Parser)]
-pub struct PackageArgs {
-    /// The path to the build file.
-    pub build_file: PathBuf,
-    /// The output file type.
-    #[arg(long, value_enum, default_value_t = OutputType::All)]
-    pub output_type: OutputType,
-    /// Only package these sub-packages (omit to package all).
-    #[arg(long)]
-    pub package: Vec<String>,
-}
-
-#[derive(Parser)]
-pub struct InternalArgs {
-    #[command(subcommand)]
-    pub command: InternalCommand,
-}
-
-#[derive(Parser)]
-pub struct BackendSocketArgs {
-    #[arg(long)]
-    pub socket: String,
-}
-
-#[derive(Subcommand)]
-pub enum InternalCommand {
-    Package(PackageArgs),
-    BackendApt(BackendSocketArgs),
-    BackendAlpm(BackendSocketArgs),
-}
-
-#[derive(Parser)]
 pub enum Cli {
     /// Create a package from a build script.
     Create(CreateArgs),
-    /// Internal commands (hidden from help)
-    #[command(hide = true)]
-    Internal(InternalArgs),
 }

@@ -12,6 +12,7 @@ repository = "https://github.com/koca-build/koca"
 
 [workspace.dependencies]
 anyhow = "1.0.98"
+async-trait = "0.1.89"
 brush = { package = "brush-core", version = "=0.4.0" }
 brush-builtins = "0.1.0"
 brush-parser = "=0.3.0"
@@ -41,8 +42,6 @@ nix = { version = "0.29", features = ["user", "term"] }
 walkdir = "2.5.0"
 interprocess = { version = "2", features = ["tokio"] }
 libversion = "0.3.1"
-ratatui = "0.30"
-crossterm = "0.29"
 alpm-common = "0.2.1"
 alpm-compress = "0.1.3"
 alpm-db = "0.2.2"

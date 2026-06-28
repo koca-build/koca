@@ -7,7 +7,7 @@ mod download;
 
 use super::transport::BackendSession;
 use super::types::{
-    ActionKind, ErrorCode, Event as ProtoEvent, InstallEvent as ProtoInstallEvent, InstalledStatus,
+    ActionKind, DependencyEvent as ProtoEvent, ErrorCode, InstallEvent as ProtoInstallEvent, InstalledStatus,
     Message, MessageBody, PackageStatus, PlannedAction, ProtocolError,
     RemoveEvent as ProtoRemoveEvent, ResultPayload,
 };
@@ -81,7 +81,7 @@ fn query_dpkg(packages: &[String]) -> HashMap<String, DpkgPkg> {
 }
 
 fn query_auto_installed(packages: &[String]) -> std::collections::HashSet<String> {
-    let mut args: Vec<&str> = vec!["showmanual"];
+    let mut args: Vec<&str> = vec!["-q", "showmanual"];
     args.extend(packages.iter().map(|s| s.as_str()));
     let output = match run_cmd("apt-mark", &args) {
         Ok(output) => output,
@@ -165,7 +165,7 @@ struct AptPkgInfo {
 /// fields surfaced by `apt-cache show`, which is more stable than parsing
 /// `apt-get -s` text output.
 fn query_apt_cache(packages: &[String]) -> HashMap<String, AptPkgInfo> {
-    let mut args: Vec<&str> = vec!["show", "--no-all-versions"];
+    let mut args: Vec<&str> = vec!["-q", "show", "--no-all-versions"];
     args.extend(packages.iter().map(|s| s.as_str()));
     let output = match run_cmd("apt-cache", &args) {
         Ok(output) => output,
@@ -211,7 +211,7 @@ fn query_apt_cache(packages: &[String]) -> HashMap<String, AptPkgInfo> {
 }
 
 pub fn install_plan(packages: &[String]) -> Result<(ResultPayload, Vec<String>), ProtocolError> {
-    let mut args: Vec<&str> = vec!["install", "-s", "-y"];
+    let mut args: Vec<&str> = vec!["install", "-s", "-y", "-q"];
     args.extend(packages.iter().map(|s| s.as_str()));
     let output = run_cmd("apt-get", &args)?;
     if !output.status.success() {
@@ -261,7 +261,6 @@ struct AptStatusState {
 
 fn parse_status_line(
     line: &str,
-    n_pkgs: u32,
     is_remove: bool,
     state: &mut AptStatusState,
 ) -> Vec<ProtoEvent> {
@@ -287,7 +286,6 @@ fn parse_status_line(
                 inner: ProtoRemoveEvent::ItemDone {
                     package: pkg.to_string(),
                     current: state.current,
-                    total: n_pkgs,
                 },
             }
         } else {
@@ -295,7 +293,6 @@ fn parse_status_line(
                 inner: ProtoInstallEvent::ItemDone {
                     package: pkg.to_string(),
                     current: state.current,
-                    total: n_pkgs,
                 },
             }
         }];
@@ -310,7 +307,6 @@ fn parse_status_line(
                 package: pkg.to_string(),
                 action,
                 current: state.current,
-                total: n_pkgs,
                 percent,
             },
         }
@@ -320,7 +316,6 @@ fn parse_status_line(
                 package: pkg.to_string(),
                 action,
                 current: state.current,
-                total: n_pkgs,
                 percent,
             },
         }
@@ -330,7 +325,6 @@ fn parse_status_line(
 fn run_apt_with_status(
     pkgs: &[String],
     is_remove: bool,
-    n_pkgs: u32,
     event_tx: &mpsc::UnboundedSender<ProtoEvent>,
 ) -> Result<Vec<String>, ProtocolError> {
     let (status_read, status_write) = nix::unistd::pipe().map_err(|e| ProtocolError {
@@ -341,6 +335,7 @@ fn run_apt_with_status(
     let mut args = vec![
         if is_remove { "remove" } else { "install" },
         "-y",
+        "-q",
         "-o",
         &status_fd_opt,
         "-o",
@@ -369,7 +364,7 @@ fn run_apt_with_status(
             seen: std::collections::HashSet::new(),
         };
         for line in BufReader::new(status_reader).lines().map_while(Result::ok) {
-            for evt in parse_status_line(&line, n_pkgs, is_remove, &mut state) {
+            for evt in parse_status_line(&line, is_remove, &mut state) {
                 let _ = fd_tx.send(evt);
             }
         }
@@ -388,7 +383,7 @@ fn run_apt_with_status(
     }
     // Mark all installed packages as auto so they can be cleaned up with autoremove.
     if !is_remove {
-        let mut mark_args: Vec<&str> = vec!["auto"];
+        let mut mark_args: Vec<&str> = vec!["-qq", "auto"];
         mark_args.extend(pkgs.iter().map(|s| s.as_str()));
         let _ = run_cmd("apt-mark", &mark_args);
     }
@@ -412,18 +407,14 @@ pub async fn commit_transaction(
     }
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ProtoEvent>();
     let pkgs = packages.clone();
-    let n_pkgs = pkgs.len() as u32;
     let join_handle = tokio::spawn(async move {
         if is_remove {
             let _ = event_tx.send(ProtoEvent::Remove {
-                inner: ProtoRemoveEvent::Start {
-                    total_packages: n_pkgs,
-                },
+                inner: ProtoRemoveEvent::Start,
             });
             let tx = event_tx.clone();
             let result =
-                tokio::task::spawn_blocking(move || run_apt_with_status(&pkgs, true, n_pkgs, &tx))
-                    .await;
+                tokio::task::spawn_blocking(move || run_apt_with_status(&pkgs, true, &tx)).await;
             let _ = event_tx.send(ProtoEvent::Remove {
                 inner: ProtoRemoveEvent::Done,
             });
@@ -445,18 +436,13 @@ pub async fn commit_transaction(
                 message: "download URL task panicked".into(),
             })
         })?;
-        let install_count = items.len() as u32;
         download_packages(&items, &event_tx).await?;
         let _ = event_tx.send(ProtoEvent::Install {
-            inner: ProtoInstallEvent::Start {
-                total_packages: install_count,
-            },
+            inner: ProtoInstallEvent::Start,
         });
         let tx = event_tx.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            run_apt_with_status(&pkgs, false, install_count, &tx)
-        })
-        .await;
+        let result =
+            tokio::task::spawn_blocking(move || run_apt_with_status(&pkgs, false, &tx)).await;
         let _ = event_tx.send(ProtoEvent::Install {
             inner: ProtoInstallEvent::Done,
         });

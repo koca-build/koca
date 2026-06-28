@@ -1,6 +1,7 @@
 mod fetch;
 
-pub use fetch::{fetch_source, format_bytes, SourceProgress, SourceProgressState};
+pub(crate) use fetch::fetch_sources;
+pub use fetch::{format_bytes, SourceProgress};
 
 use std::path::PathBuf;
 

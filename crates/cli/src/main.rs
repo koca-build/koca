@@ -4,39 +4,31 @@ mod cli;
 mod create;
 mod discover;
 mod error;
-mod internal;
-mod tui;
+mod handler;
 
 use clap::Parser;
 use cli::Cli;
 
-#[tokio::main]
-async fn main() {
-    // Ctrl+C handler: restore terminal state before exit.
-    // In raw mode SIGINT is suppressed, so we catch it via tokio.
-    tokio::spawn(async {
-        tokio::signal::ctrl_c().await.ok();
-        crossterm::terminal::disable_raw_mode().ok();
-        let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show);
-        std::process::exit(130);
-    });
+fn main() {
+    koca::init();
 
+    let runtime = tokio::runtime::Runtime::new().expect("failed to build tokio runtime");
+    let exit_code = runtime.block_on(run());
+    std::process::exit(exit_code);
+}
+
+async fn run() -> i32 {
     let cli = Cli::parse();
 
     let output = match cli {
         Cli::Create(create_args) => create::run(create_args).await,
-        Cli::Internal(args) => internal::run(args).await,
     };
-
-    // Safety net: always restore terminal state on exit, even if cleanup was
-    // missed or failed.
-    crossterm::terminal::disable_raw_mode().ok();
-    let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show);
 
     if let Err(errs) = output {
         for err in errs.0 {
             zolt::errln!("{:?}", anyhow::Error::from(err));
         }
-        std::process::exit(1);
+        return 1;
     }
+    0
 }

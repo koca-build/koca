@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use super::transport::BackendSession;
 use super::types::{
-    ActionKind, DownloadEvent as ProtoDownloadEvent, ErrorCode, Event as ProtoEvent,
+    ActionKind, DependencyEvent as ProtoEvent, DownloadEvent as ProtoDownloadEvent, ErrorCode,
     InstallEvent as ProtoInstallEvent, InstalledStatus, Message, MessageBody, PackageStatus,
     PlannedAction, ProtocolError, RemoveEvent as ProtoRemoveEvent, ResultPayload,
 };
@@ -172,7 +172,6 @@ fn check_preconditions() -> Result<(), ProtocolError> {
 
 fn tail_pacman_log(
     start_pos: u64,
-    n_pkgs: u32,
     is_remove: bool,
     tx: &mpsc::UnboundedSender<ProtoEvent>,
 ) {
@@ -217,7 +216,6 @@ fn tail_pacman_log(
                         inner: ProtoInstallEvent::Hook {
                             name: hook.to_string(),
                             current: 0,
-                            total: 0,
                         },
                     });
                 }
@@ -228,7 +226,6 @@ fn tail_pacman_log(
                         inner: ProtoRemoveEvent::ItemDone {
                             package: pkg,
                             current,
-                            total: n_pkgs,
                         },
                     }
                 } else {
@@ -236,7 +233,6 @@ fn tail_pacman_log(
                         inner: ProtoInstallEvent::ItemDone {
                             package: pkg,
                             current,
-                            total: n_pkgs,
                         },
                     }
                 });
@@ -463,7 +459,6 @@ async fn download_packages(
     use tokio::sync::Semaphore;
 
     let client = reqwest::Client::new();
-    let n_pkgs = items.len() as u32;
 
     // Filter out cached items.
     let mut to_download: Vec<(String, String, String, u64)> = Vec::new();
@@ -487,10 +482,7 @@ async fn download_packages(
 
     let total_bytes: u64 = to_download.iter().map(|(_, _, _, s)| s).sum();
     let _ = tx.send(ProtoEvent::Download {
-        inner: ProtoDownloadEvent::Start {
-            total_bytes,
-            total_packages: n_pkgs,
-        },
+        inner: ProtoDownloadEvent::Start { total_bytes },
     });
 
     if to_download.is_empty() {
@@ -622,15 +614,12 @@ pub async fn commit_transaction(
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ProtoEvent>();
     let pkgs = packages.clone();
-    let n_pkgs = pkgs.len() as u32;
 
     let join_handle = tokio::spawn(async move {
         if is_remove {
             // Remove: just run pacman -R directly.
             let _ = event_tx.send(ProtoEvent::Remove {
-                inner: ProtoRemoveEvent::Start {
-                    total_packages: n_pkgs,
-                },
+                inner: ProtoRemoveEvent::Start,
             });
             return tokio::task::spawn_blocking(move || {
                 let log_pos = std::fs::metadata(LOG_FILE).map(|m| m.len()).unwrap_or(0);
@@ -651,7 +640,7 @@ pub async fn commit_transaction(
 
                 let log_tx = event_tx.clone();
                 let log_handle = std::thread::spawn(move || {
-                    tail_pacman_log(log_pos, n_pkgs, true, &log_tx);
+                    tail_pacman_log(log_pos, true, &log_tx);
                 });
 
                 let output = child.wait_with_output().map_err(|e| ProtocolError {
@@ -700,8 +689,6 @@ pub async fn commit_transaction(
             }
         };
 
-        let resolved_count = items.len() as u32;
-
         if let Err(e) = download_packages(&items, &event_tx).await {
             drop(event_tx);
             return Err(e);
@@ -709,9 +696,7 @@ pub async fn commit_transaction(
 
         // Install via normal pacman -S — it finds cached files automatically.
         let _ = event_tx.send(ProtoEvent::Install {
-            inner: ProtoInstallEvent::Start {
-                total_packages: resolved_count,
-            },
+            inner: ProtoInstallEvent::Start,
         });
         let tx_for_install = event_tx.clone();
         tokio::task::spawn_blocking(move || {
@@ -734,7 +719,7 @@ pub async fn commit_transaction(
 
             let log_tx = tx_for_install.clone();
             let log_handle = std::thread::spawn(move || {
-                tail_pacman_log(log_pos, resolved_count, false, &log_tx);
+                tail_pacman_log(log_pos, false, &log_tx);
             });
 
             let output = child.wait_with_output().map_err(|e| ProtocolError {

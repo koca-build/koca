@@ -2,9 +2,12 @@ mod arch;
 mod parser;
 mod version;
 
+use crate::handler::{BuildHandler, SourceHandler};
+use crate::init::PackageSpec;
 use crate::{KocaError, KocaMultiResult, KocaParserError, KocaResult};
 pub use arch::Arch;
 use brush::{CreateOptions, Shell, ShellVariable};
+use fakeroost::FakerootCommandExt;
 use brush_parser::{
     ast::FunctionDefinition,
     word::{Parameter, ParameterExpr, WordPiece},
@@ -17,15 +20,16 @@ use std::{
     fs::{self, File},
     io::{BufRead, BufReader, Read},
     os::unix::fs::MetadataExt,
-    path::{self, Path},
+    path::{self, Path, PathBuf},
     str::FromStr,
 };
+use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
 pub use version::{PkgVersion, Version};
 use walkdir::WalkDir;
 
 /// The output bundle format.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub enum BundleFormat {
     /// A `.deb` package.
     Deb,
@@ -767,37 +771,123 @@ impl BuildFile {
         }
     }
 
-    /// Run the `build` function of the package.
-    ///
-    /// Returns a:
-    /// - [`KocaError::IO`] if the build directory couldn't be created.
-    /// - [`KocaError::Func`] if the `build` function failed to execute.
-    pub async fn run_build(&mut self) -> KocaResult<()> {
-        self.run_build_with_output(|_| {}).await
+    /// All dependencies to resolve before building: runtime `depends` followed
+    /// by build-time `makedepends`.
+    pub fn all_deps(&self) -> Vec<rfpm::relation::Relation> {
+        let mut deps = self.var_depends.clone();
+        deps.extend(self.var_makedepends.iter().cloned());
+        deps
     }
 
-    /// Run `build()` with a callback. Called with `Some(line)` for output,
-    /// `None` every ~80ms for tick/spinner animation.
+    /// Fetch every source for `arch` into `dest_dir`, reporting through
+    /// `handler`. Returns a per-source result in declaration order.
+    pub async fn fetch_sources(
+        &self,
+        arch: &Arch,
+        dest_dir: &Path,
+        handler: &mut impl SourceHandler,
+    ) -> Vec<Result<(), String>> {
+        let sources = self.sources(arch).to_vec();
+        crate::source::fetch_sources(&sources, dest_dir, handler).await
+    }
+
+    /// Run the `build()` function in-process, streaming output through
+    /// `handler`. `build()` needs no privilege, so it runs directly (unlike
+    /// `package()`, which goes through a fakeroot helper).
     ///
-    /// Panics if no `build()` function is defined — check `has_build()` first.
-    pub async fn run_build_with_output(
-        &mut self,
-        callback: impl FnMut(Option<BuildOutputLine>),
-    ) -> KocaResult<()> {
+    /// Panics if no `build()` is defined — guard with [`has_build`](Self::has_build).
+    pub async fn run_build(&mut self, handler: &mut impl BuildHandler) -> KocaResult<()> {
         let func = self.build_func.clone().expect("build() should be defined");
-        self.run_function_with_output(KocaFunction::Build, func, vec![], callback)
-            .await
+        handler.on_build_start();
+        let result = self
+            .run_function(KocaFunction::Build, func, vec![], |line| {
+                handler.on_build_line(line)
+            })
+            .await;
+        match &result {
+            Ok(()) => handler.on_build_end(),
+            Err(_) => handler.on_build_failed(),
+        }
+        result
     }
 
-    /// Run a named `package` (or `package:NAME`) function.
-    pub async fn run_package_for(&mut self, pkg_name: &str) -> KocaResult<()> {
-        self.run_package_for_with_output(pkg_name, |_| {}).await
+    /// Build and bundle a single package under the fakeroot supervisor,
+    /// streaming output through `handler`; returns the written artifact paths.
+    ///
+    /// Re-executes koca as a `package` helper wrapped by fakeroost so that
+    /// `package()` — and the bundling that reads its payload — observe
+    /// root-owned files without real privilege. `build_file_path` is the recipe
+    /// the helper re-parses (the in-memory `self` can't cross the process
+    /// boundary).
+    pub async fn run_package_for(
+        &self,
+        build_file_path: &Path,
+        pkg_name: &str,
+        formats: &[BundleFormat],
+        out_dir: &Path,
+        handler: &mut impl BuildHandler,
+    ) -> KocaResult<Vec<PathBuf>> {
+        handler.on_package_start(pkg_name);
+
+        // Hand the helper its inputs via a temp JSON spec (path in __KOCA_SPEC).
+        let spec = PackageSpec {
+            build_file: build_file_path.to_path_buf(),
+            pkg: pkg_name.to_string(),
+            out_dir: out_dir.to_path_buf(),
+            formats: formats.to_vec(),
+        };
+        let spec_file = tempfile::NamedTempFile::new()?;
+        serde_json::to_writer(&spec_file, &spec)
+            .map_err(|e| KocaError::IO(std::io::Error::other(e.to_string())))?;
+
+        // Re-exec koca as a `package` helper, wrapped by the fakeroot supervisor.
+        let exe = std::env::current_exe()?;
+        let mut helper = std::process::Command::new(&exe);
+        helper.env(crate::init::HELPER_VAR, "package");
+        helper.env(crate::init::SPEC_VAR, spec_file.path());
+
+        let mut cmd = tokio::process::Command::from(helper.fakeroot());
+        cmd.stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = cmd.spawn()?;
+
+        let stdout = child.stdout.take().expect("stdout was piped");
+        let stderr = child.stderr.take().expect("stderr was piped");
+
+        let (tx, mut rx) = mpsc::unbounded_channel::<BuildOutputLine>();
+        spawn_async_line_reader(stdout, BuildOutputStream::Stdout, tx.clone());
+        spawn_async_line_reader(stderr, BuildOutputStream::Stderr, tx);
+
+        while let Some(line) = rx.recv().await {
+            handler.on_package_line(pkg_name, &line);
+        }
+
+        let status = child.wait().await?;
+        if !status.success() {
+            handler.on_package_failed(pkg_name);
+            return Err(KocaError::FuncError(KocaFunction::Package));
+        }
+
+        // Bundling already happened inside the helper; report the artifact paths.
+        let version = self.var_version.to_string();
+        let arch = &self.var_arch[0];
+        let outputs: Vec<PathBuf> = formats
+            .iter()
+            .map(|f| out_dir.join(f.output_filename(pkg_name, &version, arch)))
+            .collect();
+
+        handler.on_package_end(pkg_name, &outputs);
+        Ok(outputs)
     }
 
-    pub async fn run_package_for_with_output(
+    /// Run a package function **in-process** (no fakeroot), streaming output
+    /// through `callback`. This is the primitive the `package` helper runs
+    /// under the fakeroot supervisor; consumers want
+    /// [`run_package_for`](Self::run_package_for) instead.
+    pub async fn exec_package(
         &mut self,
         pkg_name: &str,
-        callback: impl FnMut(Option<BuildOutputLine>),
+        callback: impl FnMut(&BuildOutputLine),
     ) -> KocaResult<()> {
         let (_, func) = self
             .package_funcs
@@ -819,16 +909,16 @@ impl BuildFile {
             ("pkgbase", self.packages.base().to_string()),
         ];
 
-        self.run_function_with_output(KocaFunction::Package, func, extra_env, callback)
+        self.run_function(KocaFunction::Package, func, extra_env, callback)
             .await
     }
 
-    async fn run_function_with_output(
+    async fn run_function(
         &mut self,
         function_kind: KocaFunction,
         function: FunctionDefinition,
         extra_env: Vec<(&str, String)>,
-        mut callback: impl FnMut(Option<BuildOutputLine>),
+        mut callback: impl FnMut(&BuildOutputLine),
     ) -> KocaResult<()> {
         self.shell.undefine_func(funcs::BUILD);
         self.shell.undefine_func(funcs::PACKAGE);
@@ -861,7 +951,7 @@ impl BuildFile {
         self.shell.set_working_dir(dirs::SRC)?;
 
         let result = self
-            .invoke_function_with_output(function.fname.value.as_str(), &mut callback)
+            .invoke_function(function.fname.value.as_str(), &mut callback)
             .await;
 
         self.shell.set_working_dir(existing_dir)?;
@@ -874,10 +964,10 @@ impl BuildFile {
         Ok(())
     }
 
-    async fn invoke_function_with_output(
+    async fn invoke_function(
         &mut self,
         function_name: &str,
-        callback: &mut impl FnMut(Option<BuildOutputLine>),
+        callback: &mut impl FnMut(&BuildOutputLine),
     ) -> KocaResult<u8> {
         let (stdout_reader, stdout_writer) = std::io::pipe()?;
         let (stderr_reader, stderr_writer) = std::io::pipe()?;
@@ -890,9 +980,6 @@ impl BuildFile {
         let mut params = self.shell.default_exec_params();
         params.set_fd(1, stdout_writer.into());
         params.set_fd(2, stderr_writer.into());
-
-        let mut ticker = tokio::time::interval(std::time::Duration::from_millis(80));
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         let exit_code = {
             let invoke_params = params.clone();
@@ -907,11 +994,8 @@ impl BuildFile {
                     result = &mut invoke => break result?,
                     maybe_line = rx.recv() => {
                         if let Some(line) = maybe_line {
-                            callback(Some(line));
+                            callback(&line);
                         }
-                    }
-                    _ = ticker.tick() => {
-                        callback(None);
                     }
                 }
             }
@@ -920,7 +1004,7 @@ impl BuildFile {
         drop(params);
 
         while let Some(line) = rx.recv().await {
-            callback(Some(line));
+            callback(&line);
         }
 
         let _ = stdout_handle.join();
@@ -1074,6 +1158,21 @@ impl BuildFile {
             .map(|v| v.as_slice())
             .unwrap_or(&[])
     }
+}
+
+/// Read an async byte stream (a child's piped stdout/stderr) line-by-line,
+/// forwarding each line as a [`BuildOutputLine`] until EOF.
+fn spawn_async_line_reader(
+    reader: impl tokio::io::AsyncRead + Unpin + Send + 'static,
+    stream: BuildOutputStream,
+    tx: mpsc::UnboundedSender<BuildOutputLine>,
+) {
+    let mut lines = tokio::io::BufReader::new(reader).lines();
+    tokio::spawn(async move {
+        while let Ok(Some(line)) = lines.next_line().await {
+            let _ = tx.send(BuildOutputLine { stream, line });
+        }
+    });
 }
 
 fn spawn_output_reader(

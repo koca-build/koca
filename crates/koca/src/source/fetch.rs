@@ -1,46 +1,40 @@
 use std::path::Path;
-use std::sync::{Arc, Mutex};
 
 use super::{GitRef, Source, SourceKind};
+use crate::handler::SourceHandler;
 use tempfile::NamedTempFile;
+use tokio::sync::mpsc;
 
-/// Per-item progress state, updated by the fetcher, read by the UI.
-pub struct SourceProgress {
-    /// Progress bar fraction (0.0..1.0), None if total unknown.
-    pub fraction: Option<f64>,
-    /// Bytes transferred.
-    pub bytes: u64,
-    /// Total bytes expected (from Content-Length), None if unknown.
-    pub total_bytes: Option<u64>,
-    /// Human-readable detail (e.g. "15.2 MB/38.1 MB" or "1204/3500 objects (2.1 MB)").
-    pub detail: String,
-    /// Whether the fetch is complete.
-    pub done: bool,
-    /// Error message if the fetch failed.
-    pub error: Option<String>,
-}
-
-impl Default for SourceProgress {
-    fn default() -> Self {
-        Self::new()
-    }
+/// Live progress for a single source fetch.
+pub enum SourceProgress {
+    /// HTTP/FTP/local download, by bytes.
+    Download {
+        bytes: u64,
+        total_bytes: Option<u64>,
+    },
+    /// Git clone/fetch, by object count (plus bytes received).
+    Git {
+        received_objects: usize,
+        total_objects: usize,
+        bytes: u64,
+    },
 }
 
 impl SourceProgress {
-    pub fn new() -> Self {
-        Self {
-            fraction: None,
-            bytes: 0,
-            total_bytes: None,
-            detail: String::new(),
-            done: false,
-            error: None,
+    /// Completion fraction in `0.0..=1.0`, or `None` when the total is unknown.
+    pub fn fraction(&self) -> Option<f64> {
+        match self {
+            SourceProgress::Download { bytes, total_bytes } => {
+                total_bytes.map(|t| if t == 0 { 0.0 } else { (*bytes as f64 / t as f64).min(1.0) })
+            }
+            SourceProgress::Git {
+                received_objects,
+                total_objects,
+                ..
+            } => (*total_objects > 0).then(|| *received_objects as f64 / *total_objects as f64),
         }
     }
 }
-
-/// Shared state for all source fetches.
-pub type SourceProgressState = Arc<Mutex<Vec<SourceProgress>>>;
 
 pub fn format_bytes(b: u64) -> String {
     if b >= 1_000_000_000 {
@@ -54,31 +48,80 @@ pub fn format_bytes(b: u64) -> String {
     }
 }
 
-/// Fetch a single source to `dest_dir`, updating `progress[index]`.
-pub async fn fetch_source(
+/// A per-source message from a fetcher task to the drain loop.
+enum SourceMsg {
+    Progress { index: usize, progress: SourceProgress },
+    Done { index: usize },
+    Error { index: usize, error: String },
+}
+
+/// Fetch every source in `sources` into `dest_dir` concurrently, reporting through
+/// `handler`. The parallel fetchers funnel through one channel so the handler is
+/// called sequentially. Returns a per-source result in `sources` order.
+pub async fn fetch_sources(
+    sources: &[Source],
+    dest_dir: &Path,
+    handler: &mut impl SourceHandler,
+) -> Vec<Result<(), String>> {
+    handler.on_sources_start(sources);
+
+    // Ensure the destination exists; per-source fetches surface any real error.
+    let _ = std::fs::create_dir_all(dest_dir);
+
+    let (tx, mut rx) = mpsc::unbounded_channel::<SourceMsg>();
+    let mut tasks = Vec::with_capacity(sources.len());
+    for (index, source) in sources.iter().enumerate() {
+        let source = source.clone();
+        let dest_dir = dest_dir.to_path_buf();
+        let tx = tx.clone();
+        tasks.push(tokio::spawn(
+            async move { fetch_one(&source, &dest_dir, index, &tx).await },
+        ));
+    }
+    // Drop our sender so the channel closes once every fetcher finishes.
+    drop(tx);
+
+    while let Some(msg) = rx.recv().await {
+        match msg {
+            SourceMsg::Progress { index, progress } => {
+                handler.on_source_progress(&sources[index], &progress)
+            }
+            SourceMsg::Done { index } => handler.on_source_done(&sources[index]),
+            SourceMsg::Error { index, error } => handler.on_source_error(&sources[index], &error),
+        }
+    }
+
+    let mut results = Vec::with_capacity(tasks.len());
+    for task in tasks {
+        results.push(task.await.unwrap_or_else(|e| Err(e.to_string())));
+    }
+
+    handler.on_sources_end();
+    results
+}
+
+/// Fetch one source and emit its terminal `Done`/`Error` message.
+async fn fetch_one(
     source: &Source,
     dest_dir: &Path,
     index: usize,
-    progress: &SourceProgressState,
+    tx: &mpsc::UnboundedSender<SourceMsg>,
 ) -> Result<(), String> {
-    match &source.kind {
-        SourceKind::Http { url } => fetch_http(url, source, dest_dir, index, progress).await,
+    let result = match &source.kind {
+        SourceKind::Http { url } => fetch_http(url, source, dest_dir, index, tx).await,
         SourceKind::Git { url, reference } => {
-            fetch_git(url, reference.as_ref(), source, dest_dir, index, progress).await
+            fetch_git(url, reference.as_ref(), source, dest_dir, index, tx).await
         }
-        SourceKind::Local { path } => fetch_local(path, source, dest_dir, index, progress).await,
-    }
-}
-
-fn mark_cached(dest: &Path, index: usize, progress: &SourceProgressState) -> Result<(), String> {
-    let size = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
-    let mut s = progress.lock().unwrap();
-    s[index].bytes = size;
-    s[index].total_bytes = Some(size);
-    s[index].fraction = Some(1.0);
-    s[index].detail = format!("{} (cached)", format_bytes(size));
-    s[index].done = true;
-    Ok(())
+        SourceKind::Local { path } => fetch_local(path, source, dest_dir, index, tx).await,
+    };
+    let _ = match &result {
+        Ok(()) => tx.send(SourceMsg::Done { index }),
+        Err(error) => tx.send(SourceMsg::Error {
+            index,
+            error: error.clone(),
+        }),
+    };
+    result
 }
 
 async fn fetch_http(
@@ -86,11 +129,19 @@ async fn fetch_http(
     source: &Source,
     dest_dir: &Path,
     index: usize,
-    progress: &SourceProgressState,
+    tx: &mpsc::UnboundedSender<SourceMsg>,
 ) -> Result<(), String> {
     let dest = dest_dir.join(source.dest_name());
     if dest.exists() {
-        return mark_cached(&dest, index, progress);
+        let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+        let _ = tx.send(SourceMsg::Progress {
+            index,
+            progress: SourceProgress::Download {
+                bytes: size,
+                total_bytes: Some(size),
+            },
+        });
+        return Ok(());
     }
 
     let client = reqwest::Client::builder()
@@ -99,22 +150,11 @@ async fn fetch_http(
         .map_err(|e| e.to_string())?;
 
     let mut response = client.get(url).send().await.map_err(|e| e.to_string())?;
-
     if !response.status().is_success() {
-        let msg = format!("HTTP {}", response.status());
-        let mut s = progress.lock().unwrap();
-        s[index].error = Some(msg.clone());
-        s[index].done = true;
-        return Err(msg);
+        return Err(format!("HTTP {}", response.status()));
     }
 
     let total = response.content_length().filter(|&l| l > 0);
-    if let Some(t) = total {
-        let mut s = progress.lock().unwrap();
-        s[index].total_bytes = Some(t);
-        s[index].detail = format!("0 B/{}", format_bytes(t));
-    }
-
     let tmp = NamedTempFile::new_in(dest_dir).map_err(|e| e.to_string())?;
     let tmp_path = tmp.into_temp_path();
     let mut file = tokio::fs::File::create(&tmp_path)
@@ -122,32 +162,29 @@ async fn fetch_http(
         .map_err(|e| e.to_string())?;
 
     let mut downloaded: u64 = 0;
+    let _ = tx.send(SourceMsg::Progress {
+        index,
+        progress: SourceProgress::Download {
+            bytes: 0,
+            total_bytes: total,
+        },
+    });
     while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
         tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
             .await
             .map_err(|e| e.to_string())?;
         downloaded += chunk.len() as u64;
-
-        let (fraction, detail) = if let Some(t) = total {
-            (
-                Some((downloaded as f64 / t as f64).min(1.0)),
-                format!("{}/{}", format_bytes(downloaded), format_bytes(t)),
-            )
-        } else {
-            (None, format_bytes(downloaded))
-        };
-
-        let mut s = progress.lock().unwrap();
-        s[index].bytes = downloaded;
-        s[index].fraction = fraction;
-        s[index].detail = detail;
+        let _ = tx.send(SourceMsg::Progress {
+            index,
+            progress: SourceProgress::Download {
+                bytes: downloaded,
+                total_bytes: total,
+            },
+        });
     }
 
     drop(file);
     tmp_path.persist(&dest).map_err(|e| e.to_string())?;
-
-    let mut s = progress.lock().unwrap();
-    s[index].done = true;
     Ok(())
 }
 
@@ -182,32 +219,28 @@ async fn fetch_git(
     source: &Source,
     dest_dir: &Path,
     index: usize,
-    progress: &SourceProgressState,
+    tx: &mpsc::UnboundedSender<SourceMsg>,
 ) -> Result<(), String> {
     let dest = dest_dir.join(source.dest_name());
     if dest.exists() {
-        return mark_cached(&dest, index, progress);
+        return Ok(());
     }
     let url = url.to_string();
     let reference = reference.cloned();
-    let progress = Arc::clone(progress);
+    let tx = tx.clone();
 
     tokio::task::spawn_blocking(move || {
         let mut cb = git2::RemoteCallbacks::new();
-        let progress_clone = Arc::clone(&progress);
-
+        let tx_cb = tx.clone();
         cb.transfer_progress(move |stats| {
-            let received = stats.received_objects() as u64;
-            let total = stats.total_objects() as u64;
-            let bytes = stats.received_bytes() as u64;
-
-            let mut s = progress_clone.lock().unwrap();
-            s[index].bytes = bytes;
-            if total > 0 {
-                s[index].fraction = Some(received as f64 / total as f64);
-                s[index].detail =
-                    format!("{}/{} objects ({})", received, total, format_bytes(bytes));
-            }
+            let _ = tx_cb.send(SourceMsg::Progress {
+                index,
+                progress: SourceProgress::Git {
+                    received_objects: stats.received_objects(),
+                    total_objects: stats.total_objects(),
+                    bytes: stats.received_bytes() as u64,
+                },
+            });
             true
         });
 
@@ -258,10 +291,8 @@ async fn fetch_git(
 
         if result.is_err() {
             let _ = std::fs::remove_dir_all(&dest);
-            return result;
         }
-        progress.lock().unwrap()[index].done = true;
-        Ok(())
+        result
     })
     .await
     .map_err(|e| e.to_string())?
@@ -272,22 +303,23 @@ async fn fetch_local(
     source: &Source,
     dest_dir: &Path,
     index: usize,
-    progress: &SourceProgressState,
+    tx: &mpsc::UnboundedSender<SourceMsg>,
 ) -> Result<(), String> {
     let dest = dest_dir.join(source.dest_name());
     tokio::fs::copy(path, &dest)
         .await
         .map_err(|e| e.to_string())?;
 
-    let meta = tokio::fs::metadata(&dest)
+    let size = tokio::fs::metadata(&dest)
         .await
-        .map_err(|e| e.to_string())?;
-    let size = meta.len();
-
-    let mut s = progress.lock().unwrap();
-    s[index].bytes = size;
-    s[index].fraction = Some(1.0);
-    s[index].detail = format_bytes(size);
-    s[index].done = true;
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let _ = tx.send(SourceMsg::Progress {
+        index,
+        progress: SourceProgress::Download {
+            bytes: size,
+            total_bytes: Some(size),
+        },
+    });
     Ok(())
 }
