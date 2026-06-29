@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::str::FromStr;
 
 use koca::distro::Distro;
@@ -5,7 +6,7 @@ use koca::BuildFile;
 
 use crate::cli::CreateArgs;
 use crate::error::{CliError, CliMultiError, CliMultiResult};
-use crate::handler::plain;
+use crate::handler::{plain, tui};
 
 pub async fn run(args: CreateArgs) -> CliMultiResult<()> {
     let build_file_path = match &args.build_file {
@@ -25,12 +26,9 @@ pub async fn run(args: CreateArgs) -> CliMultiResult<()> {
         Distro::detect().map_err(|err| CliMultiError::from(CliError::Koca { err }))?
     };
 
-    // TODO: route to the iocraft TUI handler when stdin && stdout are a terminal;
-    // forced to plain for now while the TUI handler is being rebuilt.
-    //
-    // use std::io::IsTerminal;
-    // if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-    //     return crate::handler::tui::run(&args, &build_file_path, build_file, &distro).await;
-    // }
-    plain::run(&args, &build_file_path, build_file, &distro).await
+    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+        tui::run(&args, &build_file_path, build_file, &distro).await
+    } else {
+        plain::run(&args, &build_file_path, build_file, &distro).await
+    }
 }

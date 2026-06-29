@@ -80,10 +80,8 @@ impl Backend {
             tokio::select! {
                 accepted = accept_fut => accepted.map_err(proto_to_koca)?,
                 status = wait_fut => {
-                    let code = status.ok().and_then(|s| s.code());
-                    return Err(KocaError::IO(std::io::Error::other(format!(
-                        "elevation helper exited before connecting (exit code: {code:?})"
-                    ))));
+                    let _ = status;
+                    return Err(KocaError::ElevationFailed);
                 }
             }
         };

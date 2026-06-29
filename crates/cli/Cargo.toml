@@ -15,9 +15,14 @@ path = "src/main.rs"
 anyhow = { workspace = true }
 async-trait.workspace = true
 clap = { workspace = true }
+crossterm = { workspace = true }
 directories = { workspace = true }
 flate2 = { workspace = true }
+iocraft = { workspace = true }
 koca = { workspace = true }
+portable-pty = { workspace = true }
+terminput = { workspace = true }
+terminput-crossterm = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
 tar = { workspace = true }

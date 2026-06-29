@@ -39,6 +39,11 @@ impl Plan {
         self.actions.is_empty()
     }
 
+    /// Number of actions that require a download.
+    pub fn download_count(&self) -> u32 {
+        self.actions.iter().filter(|a| a.download_size > 0).count() as u32
+    }
+
     fn empty() -> Self {
         Self {
             actions: Vec::new(),
@@ -163,7 +168,7 @@ impl PackageManager {
         // Both counts come from the plan: every action is installed; the subset
         // with bytes to fetch is downloaded.
         let installs = plan.actions.len() as u32;
-        let downloads = plan.actions.iter().filter(|a| a.download_size > 0).count() as u32;
+        let downloads = plan.download_count();
         handler.on_install_start(downloads, installs);
         let mut backend = Backend::connect_elevated(self.kind, handler).await?;
         let result = backend
@@ -185,7 +190,10 @@ impl PackageManager {
 
     /// Remove exactly the packages this manager installed (for `--rm-deps`).
     /// A no-op if nothing was installed.
-    pub async fn remove_installed(&mut self, handler: &mut impl DependencyHandler) -> KocaResult<()> {
+    pub async fn remove_installed(
+        &mut self,
+        handler: &mut impl DependencyHandler,
+    ) -> KocaResult<()> {
         if self.installed.is_empty() {
             return Ok(());
         }

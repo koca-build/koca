@@ -54,14 +54,16 @@ impl DependencyHandler for PlainDependencyHandler {
         zolt::infoln!("Removing {removes} package(s)...");
     }
 
-
     fn on_dep_event(&mut self, event: &DependencyEvent) {
         match event {
             DependencyEvent::Download {
                 inner: DownloadEvent::ItemDone { package },
             } => {
                 self.downloaded += 1;
-                println!("  downloaded {package} ({}/{})", self.downloaded, self.downloads);
+                println!(
+                    "  downloaded {package} ({}/{})",
+                    self.downloaded, self.downloads
+                );
             }
             DependencyEvent::Install {
                 inner: InstallEvent::ItemDone { package, current },
@@ -74,17 +76,8 @@ impl DependencyHandler for PlainDependencyHandler {
     }
 
     async fn elevate(&mut self, spec: ElevateCommandSpec) -> io::Result<Box<dyn ElevatedChild>> {
-        // Already root: run directly, no sudo. stdin/stdout detached; stderr
-        // piped so errors are captured.
         if nix::unistd::geteuid().is_root() {
-            let child = tokio::process::Command::new(&spec.program)
-                .args(&spec.args)
-                .envs(&spec.env)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .spawn()?;
-            return Ok(Box::new(TokioElevatedChild::new(child)));
+            return super::spawn_root_direct(&spec).await;
         }
 
         // Authenticate once, interactively, on the real terminal — whatever PAM
@@ -210,7 +203,7 @@ fn print_gutter_line(line: &BuildOutputLine) {
 /// `--noconfirm` proceeds unconditionally. Otherwise prompt if stdin is a
 /// terminal; in a non-interactive session without `--noconfirm`, abort rather
 /// than silently install.
-fn confirm(plan: &Plan, noconfirm: bool) -> bool {
+pub fn confirm(plan: &Plan, noconfirm: bool) -> bool {
     show_plan(plan);
 
     if noconfirm {
@@ -250,10 +243,16 @@ fn show_plan(plan: &Plan) {
     group("Removing", ActionKind::Remove);
 
     if plan.total_download > 0 {
-        println!("  Download size: {}", format_bytes(plan.total_download).bold());
+        println!(
+            "  Download size: {}",
+            format_bytes(plan.total_download).bold()
+        );
     }
     if plan.total_install > 0 {
-        println!("  Install size:  {}", format_bytes(plan.total_install).bold());
+        println!(
+            "  Install size:  {}",
+            format_bytes(plan.total_install).bold()
+        );
     }
 }
 
@@ -272,7 +271,10 @@ pub async fn run(
     let mut deps = PlainDependencyHandler::default();
 
     // Resolve → (decision) confirm → install.
-    let plan = pm.resolve(build_file.all_deps(), &mut deps).await.map_err(ke)?;
+    let plan = pm
+        .resolve(build_file.all_deps(), &mut deps)
+        .await
+        .map_err(ke)?;
     if !plan.is_empty() {
         if !confirm(&plan, args.noconfirm) {
             return Ok(());

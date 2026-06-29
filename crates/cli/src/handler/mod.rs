@@ -1,12 +1,26 @@
 pub mod plain;
+pub mod sudo;
 pub mod tui;
 
 use std::io::{self, Write};
-use std::process::ExitStatus;
+use std::process::{ExitStatus, Stdio};
 
 use async_trait::async_trait;
-use koca::handler::ElevatedChild;
+use koca::handler::{ElevateCommandSpec, ElevatedChild};
 use tokio::io::AsyncReadExt;
+
+/// Spawn the elevation helper directly (already root: no `sudo`, no PTY), with
+/// stdin/stdout detached and stderr captured so errors still surface.
+pub async fn spawn_root_direct(spec: &ElevateCommandSpec) -> io::Result<Box<dyn ElevatedChild>> {
+    let child = tokio::process::Command::new(&spec.program)
+        .args(&spec.args)
+        .envs(&spec.env)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    Ok(Box::new(TokioElevatedChild::new(child)))
+}
 
 /// A privileged child backed by a [`tokio::process::Child`].
 ///
