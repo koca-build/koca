@@ -24,9 +24,13 @@ impl SourceProgress {
     /// Completion fraction in `0.0..=1.0`, or `None` when the total is unknown.
     pub fn fraction(&self) -> Option<f64> {
         match self {
-            SourceProgress::Download { bytes, total_bytes } => {
-                total_bytes.map(|t| if t == 0 { 0.0 } else { (*bytes as f64 / t as f64).min(1.0) })
-            }
+            SourceProgress::Download { bytes, total_bytes } => total_bytes.map(|t| {
+                if t == 0 {
+                    0.0
+                } else {
+                    (*bytes as f64 / t as f64).min(1.0)
+                }
+            }),
             SourceProgress::Git {
                 received_objects,
                 total_objects,
@@ -50,9 +54,17 @@ pub fn format_bytes(b: u64) -> String {
 
 /// A per-source message from a fetcher task to the drain loop.
 enum SourceMsg {
-    Progress { index: usize, progress: SourceProgress },
-    Done { index: usize },
-    Error { index: usize, error: String },
+    Progress {
+        index: usize,
+        progress: SourceProgress,
+    },
+    Done {
+        index: usize,
+    },
+    Error {
+        index: usize,
+        error: String,
+    },
 }
 
 /// Fetch every source in `sources` into `dest_dir` concurrently, reporting through
@@ -74,9 +86,9 @@ pub async fn fetch_sources(
         let source = source.clone();
         let dest_dir = dest_dir.to_path_buf();
         let tx = tx.clone();
-        tasks.push(tokio::spawn(
-            async move { fetch_one(&source, &dest_dir, index, &tx).await },
-        ));
+        tasks.push(tokio::spawn(async move {
+            fetch_one(&source, &dest_dir, index, &tx).await
+        }));
     }
     // Drop our sender so the channel closes once every fetcher finishes.
     drop(tx);

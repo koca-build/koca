@@ -7,11 +7,11 @@ use crate::init::PackageSpec;
 use crate::{KocaError, KocaMultiResult, KocaParserError, KocaResult};
 pub use arch::Arch;
 use brush::{CreateOptions, Shell, ShellVariable};
-use fakeroost::FakerootCommandExt;
 use brush_parser::{
     ast::FunctionDefinition,
     word::{Parameter, ParameterExpr, WordPiece},
 };
+use fakeroost::FakerootCommandExt;
 use itertools::Itertools;
 use parser::DeclValue;
 use std::{

@@ -558,13 +558,13 @@ fn apply_install(model: &mut State<InstModel>, msg: InstallMsg) {
             m.view = InstView::Install;
         }
         InstallMsg::Action { package } => {
-            if !m.inst_active.iter().any(|n| *n == package) {
+            if !m.inst_active.contains(&package) {
                 m.inst_active.push(package);
                 m.inst_in_progress += 1;
             }
         }
         InstallMsg::ItemDone { package, current } => {
-            if m.inst_active.iter().any(|n| *n == package) {
+            if m.inst_active.contains(&package) {
                 m.inst_active.retain(|n| *n != package);
                 m.inst_in_progress = m.inst_in_progress.saturating_sub(1);
             }

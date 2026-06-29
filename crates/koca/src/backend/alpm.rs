@@ -170,11 +170,7 @@ fn check_preconditions() -> Result<(), ProtocolError> {
 
 // ── Log tailer ───────────────────────────────────────────────────────────
 
-fn tail_pacman_log(
-    start_pos: u64,
-    is_remove: bool,
-    tx: &mpsc::UnboundedSender<ProtoEvent>,
-) {
+fn tail_pacman_log(start_pos: u64, is_remove: bool, tx: &mpsc::UnboundedSender<ProtoEvent>) {
     let mut current: u32 = 0;
     let mut sent_start = false;
     let mut pos = start_pos;

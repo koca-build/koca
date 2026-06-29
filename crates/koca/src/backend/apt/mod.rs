@@ -7,8 +7,8 @@ mod download;
 
 use super::transport::BackendSession;
 use super::types::{
-    ActionKind, DependencyEvent as ProtoEvent, ErrorCode, InstallEvent as ProtoInstallEvent, InstalledStatus,
-    Message, MessageBody, PackageStatus, PlannedAction, ProtocolError,
+    ActionKind, DependencyEvent as ProtoEvent, ErrorCode, InstallEvent as ProtoInstallEvent,
+    InstalledStatus, Message, MessageBody, PackageStatus, PlannedAction, ProtocolError,
     RemoveEvent as ProtoRemoveEvent, ResultPayload,
 };
 use tokio::sync::mpsc;
@@ -259,11 +259,7 @@ struct AptStatusState {
     seen: std::collections::HashSet<String>,
 }
 
-fn parse_status_line(
-    line: &str,
-    is_remove: bool,
-    state: &mut AptStatusState,
-) -> Vec<ProtoEvent> {
+fn parse_status_line(line: &str, is_remove: bool, state: &mut AptStatusState) -> Vec<ProtoEvent> {
     let parts: Vec<&str> = line.splitn(4, ':').collect();
     if parts.len() < 4 || parts[0] != "pmstatus" {
         return Vec::new();

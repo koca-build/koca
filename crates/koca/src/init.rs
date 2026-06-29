@@ -130,10 +130,7 @@ async fn run_package_helper() -> i32 {
     };
 
     // Run package() in-process; print every captured line straight through.
-    if let Err(e) = build_file
-        .exec_package(&spec.pkg, |line| print_build_line(line))
-        .await
-    {
+    if let Err(e) = build_file.exec_package(&spec.pkg, print_build_line).await {
         eprintln!("koca: {e}");
         return 1;
     }
@@ -141,7 +138,10 @@ async fn run_package_helper() -> i32 {
     let arch = build_file.arch()[0].clone();
     let version = build_file.version().to_string();
     if let Err(e) = std::fs::create_dir_all(&spec.out_dir) {
-        eprintln!("koca: failed to create output dir {}: {e}", spec.out_dir.display());
+        eprintln!(
+            "koca: failed to create output dir {}: {e}",
+            spec.out_dir.display()
+        );
         return 1;
     }
     for format in spec.formats {
