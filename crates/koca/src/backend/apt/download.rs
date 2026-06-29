@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::backend::types::{
-    DownloadEvent as ProtoDownloadEvent, ErrorCode, Event as ProtoEvent, ProtocolError,
+    DependencyEvent as ProtoEvent, DownloadEvent as ProtoDownloadEvent, ErrorCode, ProtocolError,
 };
 use md5::Md5;
 use sha1::Sha1;
@@ -210,7 +210,7 @@ fn query_archive_info(
 }
 
 pub(crate) fn get_download_items(packages: &[String]) -> Result<Vec<DownloadItem>, ProtocolError> {
-    let mut args: Vec<&str> = vec!["install", "--print-uris", "-y"];
+    let mut args: Vec<&str> = vec!["install", "--print-uris", "-y", "-q"];
     args.extend(packages.iter().map(|s| s.as_str()));
     let output = run_apt_query(&args)?;
     if !output.status.success() {
@@ -432,10 +432,7 @@ pub(crate) async fn download_packages(
     }
     let total_bytes: u64 = needed.iter().map(|item| item.size).sum();
     let _ = tx.send(ProtoEvent::Download {
-        inner: ProtoDownloadEvent::Start {
-            total_bytes,
-            total_packages: items.len() as u32,
-        },
+        inner: ProtoDownloadEvent::Start { total_bytes },
     });
     for item in cached {
         let _ = tx.send(ProtoEvent::Download {

@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+async-trait = { workspace = true }
 brush = { workspace = true }
 brush-builtins = { workspace = true }
 brush-parser = { workspace = true }
@@ -34,6 +35,7 @@ tempfile = "3.27.0"
 thiserror = { workspace = true }
 tokio = { workspace = true }
 walkdir = { workspace = true }
+fakeroost = "0.1.1"
 
 [dev-dependencies]
 tokio = { workspace = true }
