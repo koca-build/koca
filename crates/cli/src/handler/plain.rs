@@ -17,7 +17,7 @@ use koca::source::{format_bytes, Source, SourceProgress};
 use koca::{BuildFile, BuildOutputLine, BuildOutputStream, PackageManager, Plan};
 use zolt::Colorize;
 
-use super::{elevate_command, TokioElevatedChild};
+use super::TokioElevatedChild;
 use crate::cli::CreateArgs;
 use crate::error::{CliError, CliMultiError, CliMultiResult};
 
@@ -54,6 +54,7 @@ impl DependencyHandler for PlainDependencyHandler {
         zolt::infoln!("Removing {removes} package(s)...");
     }
 
+
     fn on_dep_event(&mut self, event: &DependencyEvent) {
         match event {
             DependencyEvent::Download {
@@ -73,11 +74,47 @@ impl DependencyHandler for PlainDependencyHandler {
     }
 
     async fn elevate(&mut self, spec: ElevateCommandSpec) -> io::Result<Box<dyn ElevatedChild>> {
-        let child = elevate_command(&spec)
+        // Already root: run directly, no sudo. stdin/stdout detached; stderr
+        // piped so errors are captured.
+        if nix::unistd::geteuid().is_root() {
+            let child = tokio::process::Command::new(&spec.program)
+                .args(&spec.args)
+                .envs(&spec.env)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()?;
+            return Ok(Box::new(TokioElevatedChild::new(child)));
+        }
+
+        // Authenticate once, interactively, on the real terminal — whatever PAM
+        // is set up for (password, fingerprint, security key). This caches the
+        // credential for this tty.
+        let status = tokio::process::Command::new("sudo")
+            .arg("-v")
+            .status()
+            .await?;
+        if !status.success() {
+            return Err(io::Error::other("sudo authentication failed"));
+        }
+
+        // Run the backend non-interactively (cached credential) with ALL stdio
+        // detached from the terminal. With no tty in sudo's stdio, `use_pty` has
+        // nothing to put in raw mode, so our concurrent progress output to the
+        // real terminal keeps rendering normally. sudo scrubs the environment,
+        // so the `__KOCA_*` vars are reapplied through `env`.
+        let mut cmd = tokio::process::Command::new("sudo");
+        cmd.arg("-n").arg("env");
+        for (key, value) in &spec.env {
+            cmd.arg(format!("{key}={value}"));
+        }
+        cmd.arg(&spec.program).args(&spec.args);
+        cmd.stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()?;
-        Ok(Box::new(TokioElevatedChild(child)))
+            .stderr(Stdio::piped());
+
+        let child = cmd.spawn()?;
+        Ok(Box::new(TokioElevatedChild::new(child)))
     }
 }
 
