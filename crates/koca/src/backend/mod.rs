@@ -4,15 +4,20 @@ pub mod error;
 pub mod transport;
 pub mod types;
 
+use std::collections::HashMap;
+
 use transport::KocaListener;
 
+use crate::handler::{DependencyHandler, ElevateCommandSpec};
+use crate::init::{HELPER_VAR, SOCKET_VAR};
 use crate::{KocaError, KocaResult};
 
 pub use error::ProtoError;
 pub use transport::{socket_name, BackendSession, KocaSession};
 pub use types::{
-    ActionKind, Command, DownloadEvent, ErrorCode, Event, InstallEvent, InstalledStatus, Message,
-    MessageBody, PackageStatus, PlannedAction, ProtocolError, RemoveEvent, Request, ResultPayload,
+    ActionKind, Command, DependencyEvent, DownloadEvent, ErrorCode, InstallEvent, InstalledStatus,
+    Message, MessageBody, PackageStatus, PlannedAction, ProtocolError, RemoveEvent, Request,
+    ResultPayload,
 };
 
 // ── BackendKind ──────────────────────────────────────────────────────────
@@ -25,23 +30,61 @@ pub enum BackendKind {
 
 // ── Backend (sudo subprocess with socket IPC) ────────────────────────────
 
-/// A running backend subprocess and its associated [`KocaSession`].
+/// A connected, privileged backend and its associated [`KocaSession`].
 ///
-/// Used only for privileged operations that require sudo.
-/// Non-privileged calls (check-installed, install-plan) should use the
-/// handler functions directly via [`BackendKind`].
+/// The library is privilege-agnostic: it never spawns `sudo` itself. A backend
+/// is obtained by handing an [`ElevateCommandSpec`] to a
+/// [`DependencyHandler::elevate`] implementation, which launches the helper as
+/// root; the helper connects back to a socket we listen on. The re-exec'd
+/// process is caught by [`crate::init`].
 pub struct Backend {
     pub session: KocaSession,
-    pub child: tokio::process::Child,
+    pub child: Box<dyn crate::handler::ElevatedChild>,
 }
 
 impl Backend {
-    /// Spawn a privileged backend subprocess and wait for it to connect.
-    pub async fn spawn(kind: BackendKind, sudo: bool) -> KocaResult<Self> {
+    /// Obtain an elevated backend.
+    ///
+    /// Listens on a fresh socket, builds the helper [`ElevateCommandSpec`]
+    /// (`/proc/self/exe` + `__KOCA_*`), and hands it to `handler.elevate`. The
+    /// socket `accept()` is raced against the child exiting, so a failed
+    /// escalation (e.g. a mistyped `sudo` password) aborts promptly instead of
+    /// hanging on a connection that will never come.
+    pub async fn connect_elevated(
+        kind: BackendKind,
+        handler: &mut impl DependencyHandler,
+    ) -> KocaResult<Self> {
         let name = socket_name();
         let listener = KocaListener::listen(&name).map_err(proto_to_koca)?;
-        let child = spawn_process(kind, sudo, &name)?;
-        let session = listener.accept().await.map_err(proto_to_koca)?;
+
+        let exe = std::env::current_exe().map_err(KocaError::IO)?;
+        let helper = match kind {
+            BackendKind::Apt => "backend-apt",
+            BackendKind::Alpm => "backend-alpm",
+        };
+        let mut env = HashMap::new();
+        env.insert(HELPER_VAR.to_string(), helper.to_string());
+        env.insert(SOCKET_VAR.to_string(), name.clone());
+
+        let spec = ElevateCommandSpec {
+            program: exe,
+            args: Vec::new(),
+            env,
+        };
+        let mut child = handler.elevate(spec).await.map_err(KocaError::IO)?;
+
+        let session = {
+            let accept_fut = listener.accept();
+            let wait_fut = child.wait();
+            tokio::pin!(accept_fut, wait_fut);
+            tokio::select! {
+                accepted = accept_fut => accepted.map_err(proto_to_koca)?,
+                status = wait_fut => {
+                    let _ = status;
+                    return Err(KocaError::ElevationFailed);
+                }
+            }
+        };
         Ok(Self { session, child })
     }
 
@@ -50,30 +93,20 @@ impl Backend {
         self.session.call(cmd).await.map_err(proto_to_koca)
     }
 
-    /// Send a streaming command and drive the event loop with a tick callback.
+    /// Send a streaming command and forward each event to `handler`.
     pub async fn call_streaming(
         &mut self,
         cmd: Command,
-        mut callback: impl FnMut(Option<&Event>),
+        handler: &mut impl DependencyHandler,
     ) -> KocaResult<ResultPayload> {
         self.session.send(cmd).await.map_err(proto_to_koca)?;
 
-        let mut ticker = tokio::time::interval(std::time::Duration::from_millis(80));
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
         loop {
-            tokio::select! {
-                _ = ticker.tick() => {
-                    callback(None);
-                }
-                msg = self.session.recv() => {
-                    match msg.map_err(proto_to_koca)? {
-                        MessageBody::Event { event } => callback(Some(&event)),
-                        MessageBody::Result { result } => return Ok(result),
-                        MessageBody::Error { error } => {
-                            return Err(KocaError::IO(std::io::Error::other(error.to_string())))
-                        }
-                    }
+            match self.session.recv().await.map_err(proto_to_koca)? {
+                MessageBody::Event { event } => handler.on_dep_event(&event),
+                MessageBody::Result { result } => return Ok(result),
+                MessageBody::Error { error } => {
+                    return Err(KocaError::IO(std::io::Error::other(error.to_string())))
                 }
             }
         }
@@ -89,8 +122,9 @@ impl Backend {
 
 // ── Shared backend loop (for subprocess side) ────────────────────────────
 
-/// Run the backend command loop. Called from `koca internal backend-{apt,alpm}`.
-pub async fn run_backend_loop(socket: &str, kind: BackendKind) -> anyhow::Result<()> {
+/// Run the backend command loop. Dispatched by [`crate::init`] when a process
+/// is re-exec'd as a `backend-{apt,alpm}` helper.
+pub async fn run_backend(socket: &str, kind: BackendKind) -> anyhow::Result<()> {
     let mut session = BackendSession::connect(socket).await?;
     let mut pending: Option<Vec<String>> = None;
 
@@ -205,39 +239,6 @@ async fn dispatch_commit(
         BackendKind::Apt => apt::commit_transaction(msg_id, packages, is_remove, session).await,
         BackendKind::Alpm => alpm::commit_transaction(msg_id, packages, is_remove, session).await,
     }
-}
-
-// ── Process spawning ─────────────────────────────────────────────────────
-
-fn spawn_process(
-    kind: BackendKind,
-    sudo: bool,
-    socket_name: &str,
-) -> KocaResult<tokio::process::Child> {
-    let exe = std::env::current_exe().map_err(KocaError::IO)?;
-
-    let subcommand = match kind {
-        BackendKind::Apt => "backend-apt",
-        BackendKind::Alpm => "backend-alpm",
-    };
-
-    let mut cmd = if sudo && !nix::unistd::geteuid().is_root() {
-        let mut c = tokio::process::Command::new("sudo");
-        c.arg(&exe);
-        c
-    } else {
-        tokio::process::Command::new(&exe)
-    };
-
-    cmd.arg("internal")
-        .arg(subcommand)
-        .arg("--socket")
-        .arg(socket_name);
-
-    cmd.stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-
-    cmd.spawn().map_err(KocaError::IO)
 }
 
 pub fn proto_to_koca(e: ProtoError) -> KocaError {

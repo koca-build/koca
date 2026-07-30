@@ -52,7 +52,7 @@ pub struct Message {
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum MessageBody {
     Result { result: ResultPayload },
-    Event { event: Event },
+    Event { event: DependencyEvent },
     Error { error: ProtocolError },
 }
 
@@ -130,7 +130,7 @@ pub enum ActionKind {
 /// Wire format: `{"phase":"download","event":"start","total_bytes":...}`
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "phase", rename_all = "kebab-case")]
-pub enum Event {
+pub enum DependencyEvent {
     Download {
         #[serde(flatten)]
         inner: DownloadEvent,
@@ -150,7 +150,6 @@ pub enum Event {
 pub enum DownloadEvent {
     Start {
         total_bytes: u64,
-        total_packages: u32,
     },
     Progress {
         bytes_done: u64,
@@ -164,28 +163,24 @@ pub enum DownloadEvent {
     Done,
 }
 
+// No totals here: the count is reported once via `on_install_start`.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "kebab-case")]
 pub enum InstallEvent {
-    Start {
-        total_packages: u32,
-    },
+    Start,
     Action {
         package: String,
         action: String,
         current: u32,
-        total: u32,
         percent: Option<u32>,
     },
     ItemDone {
         package: String,
         current: u32,
-        total: u32,
     },
     Hook {
         name: String,
         current: u32,
-        total: u32,
     },
     Done,
 }
@@ -193,20 +188,16 @@ pub enum InstallEvent {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "kebab-case")]
 pub enum RemoveEvent {
-    Start {
-        total_packages: u32,
-    },
+    Start,
     Action {
         package: String,
         action: String,
         current: u32,
-        total: u32,
         percent: Option<u32>,
     },
     ItemDone {
         package: String,
         current: u32,
-        total: u32,
     },
     Done,
 }

@@ -81,4 +81,8 @@ pub enum KocaError {
     /// An invalid source entry.
     #[error("invalid source: {0}")]
     InvalidSource(String),
+    /// The elevation helper exited before connecting — typically a failed or
+    /// cancelled `sudo` authentication.
+    #[error("could not obtain root privileges")]
+    ElevationFailed,
 }

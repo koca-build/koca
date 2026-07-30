@@ -1,0 +1,26 @@
+# Maintainer: Test <test@example.com>
+pkgname=hello-world
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='A hello world test package'
+arch=('x86_64' 'aarch64')
+makedepends=('cowsay')
+
+build() {
+    echo "Building hello-world..."
+    PATH="${PATH}:/usr/games" cowsay "Hello from the build phase!"
+
+    # Fresh throwaway crate each run, to exercise a real cargo build.
+    workdir="$(mktemp -d)"
+    cd "${workdir}"
+    cargo init --name hello-world .
+    cargo add tokio
+    cargo build
+
+    # Stage the built binary where package() can find it.
+    cp "${workdir}/target/debug/hello-world" "${srcdir}/hello-world"
+}
+
+package() {
+    install -Dm755 "${srcdir}/hello-world" "${pkgdir}/usr/bin/hello-world"
+}
