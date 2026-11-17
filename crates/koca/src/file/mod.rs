@@ -122,12 +122,19 @@ impl PackageKind {
     }
 }
 
+/// A build file variable's value, as exported to the shell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ExportValue {
+    String(String),
+    Array(Vec<String>),
+}
+
 /// A package's Koca build file.
 pub struct BuildFile {
     /// The [`Shell`] instance to use.
     shell: Shell,
-    /// The raw list of defined variables.
-    vars: HashMap<String, DeclValue>,
+    /// The defined variables, as exported to the shell.
+    vars: HashMap<String, ExportValue>,
     /// Single vs. split package metadata.
     packages: PackageKind,
     /// The package's version.
@@ -190,6 +197,18 @@ impl BuildFile {
         }
     }
 
+    /// Remove single/double quotes from a raw word, making sure no expansion is present.
+    fn unquote_word(var_name: &str, raw: &str) -> KocaResult<String> {
+        let pieces = brush_parser::word::parse(raw, &Default::default())
+            .map_err(|_| KocaParserError::InvalidExpansion(var_name.to_string()))?;
+
+        let mut out = String::new();
+        for piece in pieces {
+            out.push_str(&Self::get_piece_string(var_name, piece.piece)?);
+        }
+        Ok(out)
+    }
+
     /// Parse a [`DeclValue::String`] into the variables actual value, with single/double quotes removed.
     fn get_decl_string(var_name: &str, value: &DeclValue) -> KocaResult<String> {
         let string_value = &value
@@ -197,14 +216,7 @@ impl BuildFile {
             .ok_or(KocaParserError::NotString(var_name.to_string()))?
             .value;
 
-        let piece = brush_parser::word::parse(string_value, &Default::default())
-            .unwrap()
-            .into_iter()
-            .exactly_one()
-            .expect("Word parser should not return 2+ elements for a string")
-            .piece;
-
-        Self::get_piece_string(var_name, piece)
+        Self::unquote_word(var_name, string_value)
     }
 
     fn parse_string_array(var_name: &str, value: &DeclValue) -> KocaMultiResult<Vec<String>> {
@@ -217,14 +229,7 @@ impl BuildFile {
             .iter()
             .map(|word| &word.value)
         {
-            let piece = brush_parser::word::parse(string_value, &Default::default())
-                .unwrap()
-                .into_iter()
-                .exactly_one()
-                .expect("Word parser should not return 2+ elements for a string")
-                .piece;
-
-            match Self::get_piece_string(var_name, piece) {
+            match Self::unquote_word(var_name, string_value) {
                 Ok(s) => result.push(s),
                 Err(err) => errs.push(err),
             }
@@ -308,6 +313,40 @@ impl BuildFile {
             return Err(errs);
         }
         Ok(result)
+    }
+
+    /// Compute the value a declared variable is exported to the shell with.
+    ///
+    /// This is the same value Koca itself parsed: quotes are removed, and
+    /// `source`/`source_*` entries are expanded with `static_vars`. Values
+    /// that can't be statically resolved (e.g. ones containing a command
+    /// substitution) fall back to the raw, unprocessed word.
+    fn export_value(
+        var_name: &str,
+        value: &DeclValue,
+        static_vars: &HashMap<String, String>,
+    ) -> ExportValue {
+        let is_source = var_name == vars::SOURCE || var_name.starts_with("source_");
+        let resolved = match value {
+            DeclValue::Array(_) if is_source => {
+                Self::expand_string_array(var_name, value, static_vars)
+                    .ok()
+                    .map(ExportValue::Array)
+            }
+            DeclValue::Array(_) => Self::parse_string_array(var_name, value)
+                .ok()
+                .map(ExportValue::Array),
+            DeclValue::String(_) => Self::get_decl_string(var_name, value)
+                .ok()
+                .map(ExportValue::String),
+        };
+
+        resolved.unwrap_or_else(|| match value {
+            DeclValue::String(word) => ExportValue::String(word.value.clone()),
+            DeclValue::Array(words) => {
+                ExportValue::Array(words.iter().map(|word| word.value.clone()).collect())
+            }
+        })
     }
 
     /// Parse a string array into `Vec<Relation>`, propagating parse errors.
@@ -713,9 +752,15 @@ impl BuildFile {
             return Err(errs);
         }
 
+        let exported_vars = decl_items
+            .vars
+            .iter()
+            .map(|(key, value)| (key.clone(), Self::export_value(key, value, &static_vars)))
+            .collect();
+
         Ok(Self {
             shell,
-            vars: decl_items.vars,
+            vars: exported_vars,
             packages: opt_packages.expect("packages should be set"),
             var_version: parsed_version.expect("version should be valid by this point"),
             var_arch: opt_arch.expect("arch should be set"),
@@ -757,12 +802,8 @@ impl BuildFile {
         // Add built-in vars.
         for (key, var) in &self.vars {
             let shell_var = match var {
-                DeclValue::String(val) => ShellVariable::new(val.value.clone()),
-                DeclValue::Array(vals) => {
-                    let string_values: Vec<String> =
-                        vals.iter().map(|word| word.value.clone()).collect();
-                    ShellVariable::new(string_values)
-                }
+                ExportValue::String(val) => ShellVariable::new(val.clone()),
+                ExportValue::Array(vals) => ShellVariable::new(vals.clone()),
             };
 
             self.shell
@@ -1308,8 +1349,100 @@ fn collect_pkg_entries(
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_pkg_entries, PkgEntry};
+    use super::{collect_pkg_entries, BuildFile, BuildOutputLine, ExportValue, PkgEntry};
     use std::collections::HashSet;
+
+    const QUOTING_BUILD_FILE: &str = r#"
+pkgname=testpkg
+pkgver=1.0.0
+arch=('x86_64' 'aarch64')
+pkgdesc='Has spaces'
+_custom="a b"'c'
+_list=('one two' "three")
+_dynamic="$(echo hi)"
+source=("https://example.com/$pkgname-$pkgver.tar.gz")
+
+build() {
+    echo "[$pkgdesc]"
+    echo "[${arch[1]}]"
+    echo "[$_custom]"
+    echo "[${_list[0]}]"
+    echo "[${source[0]}]"
+}
+
+package() {
+    true
+}
+"#;
+
+    async fn parse_quoting_build_file() -> BuildFile {
+        match BuildFile::parse(QUOTING_BUILD_FILE.as_bytes()).await {
+            Ok(build_file) => build_file,
+            Err(errs) => panic!("build file should parse: {errs:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn exports_unquoted_values() {
+        let build_file = parse_quoting_build_file().await;
+        let var = |name: &str| build_file.vars.get(name).cloned();
+
+        assert_eq!(
+            var("pkgdesc"),
+            Some(ExportValue::String("Has spaces".into()))
+        );
+        assert_eq!(
+            var("arch"),
+            Some(ExportValue::Array(vec!["x86_64".into(), "aarch64".into()]))
+        );
+        assert_eq!(var("_custom"), Some(ExportValue::String("a bc".into())));
+        assert_eq!(
+            var("_list"),
+            Some(ExportValue::Array(vec!["one two".into(), "three".into()]))
+        );
+        // Sources are exported exactly as Koca expanded them.
+        assert_eq!(
+            var("source"),
+            Some(ExportValue::Array(vec![
+                "https://example.com/testpkg-1.0.0.tar.gz".into()
+            ]))
+        );
+        // Values Koca can't statically resolve keep their raw word.
+        assert_eq!(
+            var("_dynamic"),
+            Some(ExportValue::String(r#""$(echo hi)""#.into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn build_function_sees_unquoted_values() {
+        let mut build_file = parse_quoting_build_file().await;
+        let func = build_file.build_func.clone().expect("build() is defined");
+        build_file
+            .shell
+            .define_func(func.fname.value.clone(), func.clone());
+        build_file.add_vars();
+
+        let mut lines = vec![];
+        let exit_code = build_file
+            .invoke_function("build", &mut |line: &BuildOutputLine| {
+                lines.push(line.line.clone())
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(exit_code, 0);
+        assert_eq!(
+            lines,
+            [
+                "[Has spaces]",
+                "[aarch64]",
+                "[a bc]",
+                "[one two]",
+                "[https://example.com/testpkg-1.0.0.tar.gz]",
+            ]
+        );
+    }
 
     #[test]
     fn collects_symlinks_as_links_not_files() {
