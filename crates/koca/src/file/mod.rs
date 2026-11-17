@@ -827,6 +827,7 @@ impl BuildFile {
         out_dir: &Path,
         handler: &mut impl BuildHandler,
     ) -> KocaResult<Vec<PathBuf>> {
+        let arch = self.target_arch()?;
         handler.on_package_start(pkg_name);
 
         // Hand the helper its inputs via a temp JSON spec (path in __KOCA_SPEC).
@@ -870,10 +871,9 @@ impl BuildFile {
 
         // Bundling already happened inside the helper; report the artifact paths.
         let version = self.var_version.to_string();
-        let arch = &self.var_arch[0];
         let outputs: Vec<PathBuf> = formats
             .iter()
-            .map(|f| out_dir.join(f.output_filename(pkg_name, &version, arch)))
+            .map(|f| out_dir.join(f.output_filename(pkg_name, &version, &arch)))
             .collect();
 
         handler.on_package_end(pkg_name, &outputs);
@@ -1016,7 +1016,7 @@ impl BuildFile {
     /// Bundle the named package into the given file format.
     pub fn bundle(&self, pkg_name: &str, format: BundleFormat, out_file: &Path) -> KocaResult<()> {
         let pkg_dir = dirs::pkg_for(pkg_name);
-        let rfpm_arch = self.var_arch[0].to_rfpm();
+        let rfpm_arch = self.target_arch()?.to_rfpm();
 
         let mut pkg = rfpm::Package::new(
             pkg_name,
@@ -1100,6 +1100,15 @@ impl BuildFile {
     /// Get the package's architecture.
     pub fn arch(&self) -> &[Arch] {
         &self.var_arch
+    }
+
+    /// The architecture to build for on this host, picked from `arch=()`.
+    ///
+    /// `all` wins, then `any`, then the entry matching the host. Returns
+    /// [`KocaError::UnsupportedHostArch`] if the build file doesn't support
+    /// the host.
+    pub fn target_arch(&self) -> KocaResult<Arch> {
+        Arch::select_for_host(&self.var_arch, env::consts::ARCH)
     }
 
     /// Get the package's description.

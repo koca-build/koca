@@ -20,6 +20,11 @@ pub async fn run(args: CreateArgs) -> CliMultiResult<()> {
             CliMultiError(errs.into_iter().map(|err| CliError::Koca { err }).collect())
         })?;
 
+    // Fail before installing dependencies if the host can't build this file.
+    build_file
+        .target_arch()
+        .map_err(|err| CliMultiError::from(CliError::Koca { err }))?;
+
     let distro = if let Some(target) = &args.target {
         Distro::from_str(target).map_err(|err| CliMultiError::from(CliError::Koca { err }))?
     } else {

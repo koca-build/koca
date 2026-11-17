@@ -37,6 +37,11 @@ async fn run() -> i32 {
                 } => {
                     zolt::errln!("{}", KocaError::ElevationFailed);
                 }
+                CliError::Koca {
+                    err: err @ KocaError::UnsupportedHostArch { .. },
+                } => {
+                    zolt::errln!("{err}");
+                }
                 err => zolt::errln!("{:?}", anyhow::Error::from(err)),
             }
         }
