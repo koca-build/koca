@@ -85,4 +85,12 @@ pub enum KocaError {
     /// cancelled `sudo` authentication.
     #[error("could not obtain root privileges")]
     ElevationFailed,
+    /// The build file's `arch=()` doesn't include the host architecture.
+    #[error("build file does not support host architecture {host}; arch=({supported})")]
+    UnsupportedHostArch {
+        /// The host architecture, as reported by [`std::env::consts::ARCH`].
+        host: String,
+        /// The architectures the build file declares, space-separated.
+        supported: String,
+    },
 }

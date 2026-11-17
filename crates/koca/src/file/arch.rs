@@ -82,6 +82,33 @@ impl Arch {
         }
     }
 
+    /// Pick the architecture to build for on a `host` (a
+    /// [`std::env::consts::ARCH`] value) from a build file's `arch=()`.
+    ///
+    /// `all` wins, then `any`, then the entry matching the host. Errors if
+    /// none apply.
+    pub(crate) fn select_for_host(archs: &[Arch], host: &str) -> KocaResult<Arch> {
+        if archs.contains(&Arch::All) {
+            return Ok(Arch::All);
+        }
+        if archs.contains(&Arch::Any) {
+            return Ok(Arch::Any);
+        }
+        if let Ok(host_arch) = Arch::from_str(host) {
+            if archs.contains(&host_arch) {
+                return Ok(host_arch);
+            }
+        }
+        Err(KocaError::UnsupportedHostArch {
+            host: host.to_string(),
+            supported: archs
+                .iter()
+                .map(Arch::get_string)
+                .collect::<Vec<_>>()
+                .join(" "),
+        })
+    }
+
     /// All string variants that parse to this arch. Useful for matching `source_SUFFIX` variables.
     pub fn suffixes(&self) -> &[&str] {
         match self {
@@ -90,5 +117,53 @@ impl Arch {
             Arch::X64 => &["x64", "x86_64", "amd64"],
             Arch::Arm64 => &["arm64", "aarch64"],
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Arch;
+    use crate::KocaError;
+
+    #[test]
+    fn selects_matching_host_arch() {
+        let archs = [Arch::X64, Arch::Arm64];
+        assert_eq!(Arch::select_for_host(&archs, "x86_64").unwrap(), Arch::X64);
+        assert_eq!(
+            Arch::select_for_host(&archs, "aarch64").unwrap(),
+            Arch::Arm64
+        );
+    }
+
+    #[test]
+    fn prefers_all_then_any() {
+        assert_eq!(
+            Arch::select_for_host(&[Arch::X64, Arch::All], "aarch64").unwrap(),
+            Arch::All
+        );
+        assert_eq!(
+            Arch::select_for_host(&[Arch::Arm64, Arch::Any, Arch::All], "aarch64").unwrap(),
+            Arch::All
+        );
+        assert_eq!(
+            Arch::select_for_host(&[Arch::X64, Arch::Any], "x86_64").unwrap(),
+            Arch::Any
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_host_arch() {
+        let err = Arch::select_for_host(&[Arch::X64], "aarch64").unwrap_err();
+        assert!(matches!(err, KocaError::UnsupportedHostArch { .. }));
+        assert_eq!(
+            err.to_string(),
+            "build file does not support host architecture aarch64; arch=(x64)"
+        );
+
+        let err = Arch::select_for_host(&[Arch::X64, Arch::Arm64], "riscv64").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "build file does not support host architecture riscv64; arch=(x64 arm64)"
+        );
     }
 }

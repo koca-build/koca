@@ -930,7 +930,7 @@ pub async fn run(
     }
 
     // Sources.
-    let arch = build_file.arch()[0].clone();
+    let arch = build_file.target_arch().map_err(ke)?;
     let srcdir = Path::new("koca-build/src");
     let results = {
         let (tx, rx) = unbounded_channel::<SourcesMsg>();

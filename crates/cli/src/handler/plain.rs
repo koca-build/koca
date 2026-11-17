@@ -283,7 +283,7 @@ pub async fn run(
     }
 
     // Sources.
-    let arch = build_file.arch()[0].clone();
+    let arch = build_file.target_arch().map_err(ke)?;
     let srcdir = Path::new("koca-build/src");
     let mut sources = PlainSourceHandler::default();
     let results = build_file.fetch_sources(&arch, srcdir, &mut sources).await;
